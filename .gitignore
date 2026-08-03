@@ -1,0 +1,36 @@
+# ---- Secrets -------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---- Node ----------------------------------------------------------------
+node_modules/
+npm-debug.log*
+
+# ---- Tooling -------------------------------------------------------------
+.claude/settings.local*.json
+
+# macOS duplicate-file artefacts ("foo 2.json") created by the sync agent that
+# also sets UF_HIDDEN on files here. See README "Known environment issue".
+*[0-9].pth
+
+# ---- Editors / OS --------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

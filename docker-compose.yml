@@ -1,0 +1,35 @@
+# Local stack for Propilot AI.
+#
+#   cp backend/.env.example backend/.env   # then add your key
+#   docker compose up --build
+#
+# Phase 2 adds postgres (pgvector) and langfuse services here.
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: propilot-backend:local
+    ports:
+      - "8000:8000"
+    environment:
+      PROPILOT_ENVIRONMENT: development
+      PROPILOT_LOG_FORMAT: json
+      PROPILOT_LOG_LEVEL: INFO
+      PROPILOT_CORS_ORIGINS: http://localhost:5173
+    env_file:
+      # Optional so the stack still builds on a fresh clone.
+      - path: ./backend/.env
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
