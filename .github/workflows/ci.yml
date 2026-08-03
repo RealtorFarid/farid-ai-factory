@@ -2,8 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Every branch, so a feature branch is verified before a PR exists.
+    branches: ["**"]
   pull_request:
+    # Same-repo PRs are already covered by `push`; this catches forks. The
+    # per-job `if` below drops the duplicate run for same-repo branches.
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,6 +21,7 @@ jobs:
   backend:
     name: Lint, type-check and test
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     defaults:
       run:
         working-directory: backend
@@ -69,6 +75,7 @@ jobs:
   docker:
     name: Build and smoke-test the image
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
