@@ -4,10 +4,15 @@ An AI operating system for real-estate professionals.
 
 This repository holds the agent runtime and the HTTP API in front of it.
 
-**Status:** Phase 1 complete — a production-shaped FastAPI service running a
-single agent (`atlas`), with configuration, structured logging, optional
-tracing, containerisation and CI. Tools, memory, multi-agent orchestration and
-the human-in-the-loop approval gate are Phase 2. See [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Sprints 1–3 complete. A FastAPI runtime with an agent that can read
+your workspace and *act* on it — behind a human approval gate — plus a React
+product surface on top. Memory, multi-agent orchestration and evaluation are
+next. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+The core idea: Atlas reads your tasks, leads, inbox and calendar before it
+answers, and when it wants to send an email or book a showing the run **pauses**
+until you approve it. That gate is structural, not advisory — a tool declares
+`requires_approval` and there is no code path that runs it without a decision.
 
 ---
 
@@ -21,10 +26,12 @@ cd farid-ai-factory
 
 cp backend/.env.example backend/.env    # then add your OpenAI key
 make install
-make run
+make web-install
+make dev                                # API on :8000, web on :5173
 ```
 
-The API is then on <http://127.0.0.1:8000>, with docs at `/docs`.
+Open <http://localhost:5173>. The API's own docs are at
+<http://127.0.0.1:8000/docs>.
 
 ```bash
 curl localhost:8000/health
@@ -65,8 +72,17 @@ docker compose up --build
 | `GET` | `/health` | Liveness. Dependency-free, always 200 when the process is up. |
 | `GET` | `/health/ready` | Readiness: agents registered, credentials present, tracing state. |
 | `GET` | `/v1/agents` | List registered agents. |
-| `POST` | `/v1/agents/{name}/run` | Run an agent, wait for the full result. |
-| `POST` | `/v1/agents/{name}/stream` | Run an agent, stream Server-Sent Events. |
+| `GET` | `/v1/agents/tools` | Every tool, and whether it is gated behind approval. |
+| `POST` | `/v1/agents/{name}/run` | Run an agent; returns a run, possibly `awaiting_approval`. |
+| `POST` | `/v1/agents/{name}/stream` | Run an agent, streaming its events. |
+| `GET` | `/v1/runs` · `/v1/runs/{id}` | Run history and detail. |
+| `POST` | `/v1/runs/{id}/approvals` | Approve or deny pending actions; resumes the run. |
+| `GET` | `/v1/runs/{id}/events` | SSE stream of a run, with `Last-Event-ID` resume. |
+| `GET` | `/v1/workspace/dashboard` | Everything the home screen needs, in one round trip. |
+| `GET` | `/v1/workspace/{tasks,leads,email/summary,calendar/summary,suggestions}` | Per-panel data. |
+
+The workspace endpoints and the agent's tools are backed by the **same
+service**, so an agent can never quote a number the dashboard disagrees with.
 
 Every response carries an `X-Request-ID` header (an inbound one is honoured, so
 requests can be traced across services). Every error uses one envelope:
@@ -117,22 +133,34 @@ server/             Legacy Node prototype, superseded by ADR D-002
 
 ---
 
-## Known environment issue (macOS)
+## Known environment issue (macOS + iCloud)
 
-On the primary development machine, a background process re-applies the macOS
-`UF_HIDDEN` flag to files under `~/Documents`. CPython **silently skips hidden
-`.pth` files** (`site.py`, `addpackage`), which intermittently breaks editable
-installs — `import backend` fails with no explanation, then works again after a
-reinstall, then fails again.
+**This repository is inside `~/Documents`, which is iCloud-synced with
+"Optimise Mac Storage" on.** That causes two distinct, genuinely confusing
+failures, both confirmed by inspection rather than guessed at:
 
-This is worked around rather than fought:
+1. **Hidden `.pth` files.** The sync agent sets the macOS `UF_HIDDEN` flag on
+   files in `backend/.venv`. CPython **silently skips hidden `.pth` files**
+   (`site.py`, `addpackage`) — no error, no warning — so editable installs
+   break at random: `import backend` fails, works after a reinstall, then fails
+   again. Every `.pth` in the venv was affected, including coverage's.
 
-- `pytest` sets `pythonpath = ["src"]`, so the suite never depends on it.
-- The `Makefile` exports `PYTHONPATH=src` for every target.
-- The Docker image installs with `--no-editable`, so no `.pth` is involved.
+2. **Dataless (evicted) dependency files.** Files get flagged
+   `hidden,compressed,dataless`. Importing one blocks in
+   `importlib.get_data` until iCloud re-downloads it, which can hang for
+   minutes. Symptom: the server starts, prints nothing, and never listens.
 
-`make unhide` clears the flag if you need the editable install itself to work.
-Linux and CI are unaffected.
+Worked around rather than fought:
+
+- `pytest` sets `pythonpath = ["src"]` and the `Makefile` exports
+  `PYTHONPATH=src`, so neither depends on `.pth`.
+- The Docker image installs with `--no-editable` — no `.pth`, no iCloud.
+- `make unhide` clears the hidden flag; `make materialise` force-downloads the
+  venv.
+
+**The real fix is to move this repository out of `~/Documents`** (e.g. to
+`~/dev/farid-ai-factory`), or to turn off Optimise Mac Storage. Linux and CI are
+completely unaffected, which is why CI is the authoritative verification.
 
 ---
 

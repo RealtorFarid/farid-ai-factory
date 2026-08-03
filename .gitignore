@@ -21,6 +21,9 @@ htmlcov/
 # ---- Node ----------------------------------------------------------------
 node_modules/
 npm-debug.log*
+dist/
+.vite/
+*.tsbuildinfo
 
 # ---- Tooling -------------------------------------------------------------
 .claude/settings.local*.json

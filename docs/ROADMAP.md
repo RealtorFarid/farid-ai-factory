@@ -5,15 +5,15 @@ Measured against the functional requirements in
 
 | Capability | Status |
 |---|---|
-| Multi-Agent | Phase 3 — registry exists, one agent registered |
-| Browser Automation | Phase 3 |
-| MCP Support | Phase 3 |
-| Memory | Phase 2 |
-| Evaluation | Phase 3 |
-| Tracing | ✅ Phase 1 (Langfuse, optional) |
-| LLM Routing | Phase 2 |
-| Tool Calling | Phase 2 |
-| Human in the Loop | Phase 2 |
+| Multi-Agent | Sprint 4 — registry exists, one agent registered |
+| Browser Automation | Sprint 5 |
+| MCP Support | Sprint 5 |
+| Memory | Sprint 4 — runs are in-process and lost on restart |
+| Evaluation | Sprint 5 |
+| Tracing | ✅ Sprint 1 (Langfuse, optional) |
+| LLM Routing | Sprint 4 |
+| Tool Calling | ✅ Sprint 2 — 8 tools, 5 read-only, 3 gated |
+| Human in the Loop | ✅ Sprint 2 — structural, not advisory |
 
 ---
 
@@ -39,26 +39,44 @@ Measured against the functional requirements in
 - [x] Multi-stage Dockerfile (non-root, healthcheck) and compose stack
 - [x] `docs/ARCHITECTURE.md`, `Makefile`
 
-## Phase 2 — Close the requirements gap
+## Sprint 2 — An agent that can act ✅
 
-Target: an agent that can *act*, with a human in the loop.
+- [x] `runtime/tools.py` — tool registry. A tool declares `requires_approval`
+      and the registry constructs it that way, so the gate cannot be bypassed
+      by forgetting to check it.
+- [x] `runtime/events.py` — event bus with a bounded per-run replay buffer.
+      Late and reconnecting subscribers see the whole run; a lagging subscriber
+      is dropped rather than allowed to stall the run.
+- [x] `runtime/runs.py` + `runtime/orchestrator.py` — run lifecycle and the
+      approval gate. Omitted decisions are **denied**: silence is never consent.
+- [x] SSE approval stream, with `Last-Event-ID` resume
+- [x] `runtime/workspace/` — the real-estate domain behind a store protocol,
+      backing both the agent tools and the REST API from one service
 
-- [ ] `runtime/tools.py` — tool registry wired into `build_registry`
-- [ ] `runtime/events.py` — event bus (agent lifecycle, tool calls, approvals)
-- [ ] Human-in-the-loop approval gate: pause a run, surface the pending action,
-      resume on approval. A core principle in REQUIREMENTS.md; must land before
-      any tool can affect the outside world.
-- [ ] `runtime/memory.py` — PostgreSQL + pgvector, SQLAlchemy, Alembic.
-      Session memory first, semantic recall second. `session_id` is already
-      accepted and logged; make it mean something.
+## Sprint 3 — The product surface ✅
+
+- [x] React 19 + Vite + TypeScript app in `apps/web`
+- [x] Six real, data-backed screens — Today, Ask Atlas, Leads, Inbox, Calendar,
+      Activity. No placeholder pages.
+- [x] Streaming chat with inline approval cards showing the exact tool and
+      arguments before anything runs
+- [x] Token-based design system, light and dark, responsive to 320px
+- [x] Skeleton loading states that mirror real row layout, plus offline and
+      error states with retry
+- [x] CI job: typecheck, lint, build
+
+## Sprint 4 — Multi-agent and evidence
+
+- [ ] **Persistence.** `RunStore` and `InMemoryWorkspaceStore` are in-process:
+      a restart loses every run and resets the workspace, and a second worker
+      would not see the first one's runs. PostgreSQL + pgvector behind the
+      existing protocols. This is the top blocker for real use.
+- [ ] `runtime/memory.py` — session memory, then semantic recall. `session_id`
+      is already accepted, logged and used to group runs; make it mean more.
 - [ ] `runtime/llm.py` — LiteLLM routing, model fallback, cost accounting
 - [ ] Rate limiting and per-request cost caps
 - [ ] Agent loader: parse `agents/*.md` into runtime agents, and fill the seven
-      empty charters (Architect, Backend, Frontend, Integration, Marketing, QA,
-      RealEstate)
-
-## Phase 3 — Multi-agent and evidence
-
+      empty charters
 - [ ] LangGraph orchestration: supervisor routing to specialists
 - [ ] Fill in `research/architecture/SCORECARD.md` by actually benchmarking the
       candidates, then resolve every 🔍 in `STACK.md` to ✅/❌ with an ADR.
