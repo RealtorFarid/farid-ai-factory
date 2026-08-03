@@ -39,10 +39,21 @@ class EventType(StrEnum):
     RUN_TOKEN = "run.token"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
+    RUN_RESUMED = "run.resumed"
+
+    #: A gated tool the agent wants to call. Nothing has happened yet — this is
+    #: deliberately distinct from `tool.called`, so a UI never implies that a
+    #: pending action already ran.
+    TOOL_PROPOSED = "tool.proposed"
+    #: An ungated tool the agent invoked directly.
     TOOL_CALLED = "tool.called"
+    #: A tool returned a result. The effect, if any, has now happened.
+    TOOL_EXECUTED = "tool.executed"
+    #: A tool errored — bad arguments, or the tool itself raised.
+    TOOL_FAILED = "tool.failed"
+
     APPROVAL_REQUIRED = "approval.required"
     APPROVAL_RESOLVED = "approval.resolved"
-    RUN_RESUMED = "run.resumed"
 
 
 @dataclass(frozen=True, slots=True)

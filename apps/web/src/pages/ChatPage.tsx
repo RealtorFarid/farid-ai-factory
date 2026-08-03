@@ -8,7 +8,7 @@ import { Card } from "@/components/ui";
 import { useChat } from "@/hooks/useChat";
 
 export function ChatPage() {
-  const { entries, busy, send, resolve, reset } = useChat();
+  const { entries, busy, send, choose, submit, reset } = useChat();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -37,7 +37,13 @@ export function ChatPage() {
         }
         flush
       >
-        <Chat entries={entries} busy={busy} onSend={send} onResolve={resolve} />
+        <Chat
+          entries={entries}
+          busy={busy}
+          onSend={send}
+          onChoose={choose}
+          onSubmit={submit}
+        />
       </Card>
     </div>
   );

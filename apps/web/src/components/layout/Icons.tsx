@@ -84,6 +84,13 @@ export const IconX = ({ size = 15 }: Props) => (
   </svg>
 );
 
+export const IconPartial = ({ size = 16 }: Props) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 export const IconSpark = ({ size = 16 }: Props) => (
   <svg {...base(size)}>
     <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.9L12 18.5l-1.8-5.8L4.5 10.8 10.2 9 12 3.5Z" />

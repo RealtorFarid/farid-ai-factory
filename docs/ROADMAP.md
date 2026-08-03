@@ -65,7 +65,34 @@ Measured against the functional requirements in
       error states with retry
 - [x] CI job: typecheck, lint, build
 
-## Sprint 4 — Multi-agent and evidence
+## Sprint 4A — Approval robustness ✅
+
+Found by driving the live UI: approving one of two proposed actions failed the
+whole run and silently discarded the approved one. Three defects behind it.
+
+- [x] **Per-tool isolation.** Tool functions are wrapped so an exception becomes
+      a structured result instead of killing the run. Tool parameters take
+      `str` rather than `datetime`: a strict annotation makes PydanticAI reject
+      the call *before* the function runs, and a model that keeps re-sending a
+      bad value exhausts the retry budget and takes the run down.
+- [x] **Partial success.** `RunStatus.PARTIAL` plus per-call
+      `ToolCallStatus` (`proposed` / `executed` / `denied` / `failed`) and an
+      error string. A run that breaks mid-flight keeps whatever already
+      executed instead of discarding it.
+- [x] **Proposed vs executed.** `tool.proposed` for gated calls,
+      `tool.called` for ungated, `tool.executed` / `tool.failed` on result. A
+      pending action can no longer look like it already ran.
+- [x] **Grouped approvals in the UI.** Every gated action a run proposes is one
+      card with one confirm step. Per-card submission was silently denying the
+      actions the user had not looked at yet.
+- [x] 22 regression tests, asserted by effect on the workspace
+- [x] Browser end-to-end acceptance suite (`npm run e2e`)
+
+## Sprint 4B — Persistence
+
+## Sprint 4C — Developer experience
+
+## Sprint 5 — Multi-agent and evidence
 
 - [ ] **Persistence.** `RunStore` and `InMemoryWorkspaceStore` are in-process:
       a restart loses every run and resets the workspace, and a second worker

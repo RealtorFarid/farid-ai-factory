@@ -2,8 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { IconCheck, IconSend, IconShield, IconSpark, IconTool, IconX } from "../layout/Icons";
-import { Badge, Button } from "../ui";
+import {
+  IconCheck,
+  IconPartial,
+  IconSend,
+  IconShield,
+  IconSpark,
+  IconTool,
+  IconX,
+} from "../layout/Icons";
+import { Badge, Button, type Tone } from "../ui";
 import type { Entry } from "@/hooks/useChat";
 import { argEntries, titleCase } from "@/lib/format";
 
@@ -24,21 +32,28 @@ function ToolChip({ name }: { name: string }) {
 }
 
 function AgentEntry({ entry }: { entry: Extract<Entry, { kind: "agent" }> }) {
+  // A turn can produce tool activity but no prose — when the agent's next step
+  // is an approval request. Rendering an empty bubble in that case looks broken,
+  // so the chips stand alone.
+  const showBubble = Boolean(entry.text) || entry.streaming;
+
   return (
     <div className="msg msg--agent">
       <span className="msg__avatar msg__avatar--agent">A</span>
       <div style={{ minWidth: 0 }}>
-        <div className="msg__bubble">
-          {entry.text}
-          {entry.streaming && entry.text && <span className="caret" />}
-          {entry.streaming && !entry.text && (
-            <span className="thinking" aria-label="Atlas is thinking">
-              <span />
-              <span />
-              <span />
-            </span>
-          )}
-        </div>
+        {showBubble && (
+          <div className="msg__bubble">
+            {entry.text}
+            {entry.streaming && entry.text && <span className="caret" />}
+            {entry.streaming && !entry.text && (
+              <span className="thinking" aria-label="Atlas is thinking">
+                <span />
+                <span />
+                <span />
+              </span>
+            )}
+          </div>
+        )}
         {entry.tools.length > 0 && (
           <div className="msg__tools">
             {entry.tools.map((tool, index) => (
@@ -51,52 +66,130 @@ function AgentEntry({ entry }: { entry: Extract<Entry, { kind: "agent" }> }) {
   );
 }
 
-function ApprovalEntry({
+const OUTCOME_LABEL: Record<string, { text: string; tone: Tone }> = {
+  executed: { text: "Done", tone: "success" },
+  denied: { text: "Declined", tone: "neutral" },
+  failed: { text: "Failed", tone: "danger" },
+  proposed: { text: "Not run", tone: "neutral" },
+};
+
+/**
+ * One card per run, listing every gated action it proposed.
+ *
+ * Grouped rather than one card per action: the API denies anything left out of
+ * a decision set, so submitting each action separately would silently reject
+ * the ones the user had not looked at yet.
+ */
+function ApprovalsEntry({
   entry,
-  onResolve,
+  onChoose,
+  onSubmit,
 }: {
-  entry: Extract<Entry, { kind: "approval" }>;
-  onResolve: (approved: boolean) => void;
+  entry: Extract<Entry, { kind: "approvals" }>;
+  onChoose: (toolCallId: string, approved: boolean) => void;
+  onSubmit: () => void;
 }) {
-  const { approval, resolution } = entry;
-  const busy = resolution === "submitting";
-  const decided = resolution === "approved" || resolution === "denied";
+  const { approvals, choices, state, outcome } = entry;
+  const undecided = approvals.filter((a) => choices[a.tool_call_id] === undefined).length;
+  const busy = state === "submitting";
+
+  if (state === "resolved" && outcome) {
+    const gated = outcome.calls.filter((c) => c.requires_approval);
+    const done = gated.filter((c) => c.status === "executed").length;
+    const stopped = gated.length - done;
+
+    return (
+      <div className="approval approval--resolved">
+        <div className="approval__head">
+          {outcome.status === "partial" ? <IconPartial /> : <IconCheck />}
+          {outcome.status === "partial"
+            ? `Partly done — ${done} carried out, ${stopped} not`
+            : `Done — ${done} action${done === 1 ? "" : "s"} carried out`}
+        </div>
+        <ul className="approval__outcomes">
+          {gated.map((call) => {
+            const label = OUTCOME_LABEL[call.status] ?? OUTCOME_LABEL.proposed!;
+            return (
+              <li key={call.tool_call_id}>
+                <Badge tone={label.tone}>{label.text}</Badge>
+                <span>{titleCase(call.tool_name)}</span>
+                {call.error && <span className="approval__error">{call.error}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
+  }
 
   return (
     <div className="approval">
       <div className="approval__head">
         <IconShield />
-        Approval needed — {titleCase(approval.tool_name)}
+        {approvals.length === 1
+          ? "Approval needed"
+          : `${approvals.length} actions need your approval`}
       </div>
-      {approval.description && <p className="approval__desc">{approval.description}</p>}
+      <p className="approval__desc">
+        Nothing below has happened yet. Choose for each, then confirm.
+      </p>
 
-      <div className="approval__args">
-        {argEntries(approval.args).map(([key, value]) => (
-          <div key={key} style={{ display: "contents" }}>
-            <span className="approval__arg-key">{key}</span>
-            <span className="approval__arg-value">{value}</span>
+      {approvals.map((approval) => {
+        const choice = choices[approval.tool_call_id];
+        return (
+          <div className="approval__item" key={approval.tool_call_id}>
+            <div className="approval__item-head">
+              <strong>{titleCase(approval.tool_name)}</strong>
+              {choice !== undefined && (
+                <Badge tone={choice ? "success" : "neutral"}>
+                  {choice ? "Will approve" : "Will decline"}
+                </Badge>
+              )}
+            </div>
+            {approval.description && (
+              <p className="approval__desc">{approval.description}</p>
+            )}
+            <div className="approval__args">
+              {argEntries(approval.args).map(([key, value]) => (
+                <div key={key} style={{ display: "contents" }}>
+                  <span className="approval__arg-key">{key}</span>
+                  <span className="approval__arg-value">{value}</span>
+                </div>
+              ))}
+            </div>
+            <div className="approval__actions">
+              <Button
+                variant={choice === true ? "primary" : "secondary"}
+                size="sm"
+                disabled={busy}
+                aria-pressed={choice === true}
+                onClick={() => onChoose(approval.tool_call_id, true)}
+              >
+                <IconCheck /> Approve
+              </Button>
+              <Button
+                variant={choice === false ? "danger" : "secondary"}
+                size="sm"
+                disabled={busy}
+                aria-pressed={choice === false}
+                onClick={() => onChoose(approval.tool_call_id, false)}
+              >
+                <IconX /> Decline
+              </Button>
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
 
-      {decided ? (
-        <div
-          className="approval__resolved"
-          style={{ color: resolution === "approved" ? "var(--success)" : "var(--text-muted)" }}
-        >
-          {resolution === "approved" ? <IconCheck /> : <IconX />}
-          {resolution === "approved" ? "Approved — Atlas carried this out." : "Denied."}
-        </div>
-      ) : (
-        <div className="approval__actions">
-          <Button variant="primary" size="sm" disabled={busy} onClick={() => onResolve(true)}>
-            <IconCheck /> {busy ? "Working…" : "Approve"}
-          </Button>
-          <Button variant="danger" size="sm" disabled={busy} onClick={() => onResolve(false)}>
-            <IconX /> Deny
-          </Button>
-        </div>
-      )}
+      <div className="approval__confirm">
+        <Button variant="primary" disabled={busy || undecided > 0} onClick={onSubmit}>
+          {busy
+            ? "Working…"
+            : undecided > 0
+              ? `Choose ${undecided} more`
+              : "Confirm"}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -105,12 +198,14 @@ export function Chat({
   entries,
   busy,
   onSend,
-  onResolve,
+  onChoose,
+  onSubmit,
 }: {
   entries: Entry[];
   busy: boolean;
   onSend: (text: string) => void;
-  onResolve: (entryId: string, runId: string, toolCallId: string, approved: boolean) => void;
+  onChoose: (entryId: string, toolCallId: string, approved: boolean) => void;
+  onSubmit: (entryId: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
@@ -158,14 +253,13 @@ export function Chat({
               );
             case "agent":
               return <AgentEntry entry={entry} key={entry.id} />;
-            case "approval":
+            case "approvals":
               return (
-                <ApprovalEntry
+                <ApprovalsEntry
                   key={entry.id}
                   entry={entry}
-                  onResolve={(approved) =>
-                    onResolve(entry.id, entry.runId, entry.approval.tool_call_id, approved)
-                  }
+                  onChoose={(toolCallId, approved) => onChoose(entry.id, toolCallId, approved)}
+                  onSubmit={() => onSubmit(entry.id)}
                 />
               );
             case "error":

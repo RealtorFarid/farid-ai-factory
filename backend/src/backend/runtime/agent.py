@@ -17,6 +17,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from backend.runtime.config import Settings
+from backend.runtime.stub import STUB_MODEL_NAME, build_stub_model
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from backend.runtime.tools import ToolRegistry
@@ -122,6 +123,8 @@ def resolve_model(settings: Settings) -> Model | str:
     fails with an authentication error, which is the honest outcome.
     """
     spec = settings.default_model
+    if spec == STUB_MODEL_NAME:
+        return build_stub_model()
     if not spec.startswith("openai:"):
         return spec
 

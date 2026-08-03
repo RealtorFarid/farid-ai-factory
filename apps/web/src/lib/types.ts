@@ -107,7 +107,15 @@ export interface Dashboard {
 
 // ---- Agents and runs -----------------------------------------------------
 
-export type RunStatus = "running" | "awaiting_approval" | "completed" | "failed";
+export type RunStatus =
+  | "running"
+  | "awaiting_approval"
+  | "completed"
+  /** Finished, but at least one proposed action was denied or failed. */
+  | "partial"
+  | "failed";
+
+export type ToolCallStatus = "proposed" | "executed" | "denied" | "failed";
 
 export interface Usage {
   input_tokens: number;
@@ -127,7 +135,10 @@ export interface ToolCall {
   tool_name: string;
   tool_call_id: string;
   args: Record<string, unknown>;
+  status: ToolCallStatus;
   approved: boolean | null;
+  error: string | null;
+  requires_approval: boolean;
 }
 
 export interface Run {
@@ -168,10 +179,16 @@ export type RunEventType =
   | "run.token"
   | "run.completed"
   | "run.failed"
+  | "run.resumed"
+  /** A gated tool the agent wants to call. Nothing has run yet. */
+  | "tool.proposed"
+  /** An ungated tool the agent invoked directly. */
   | "tool.called"
+  /** A tool returned. Any effect has now actually happened. */
+  | "tool.executed"
+  | "tool.failed"
   | "approval.required"
-  | "approval.resolved"
-  | "run.resumed";
+  | "approval.resolved";
 
 export interface RunEvent {
   type: RunEventType;

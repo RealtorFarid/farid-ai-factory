@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.runtime.runs import Run, RunStatus
+from backend.runtime.runs import Run, RunStatus, ToolCallStatus
 
 __all__ = [
     "AgentInfo",
@@ -89,7 +89,10 @@ class ToolCallInfo(StrictModel):
     tool_name: str
     tool_call_id: str
     args: dict[str, object]
+    status: ToolCallStatus
     approved: bool | None
+    error: str | None
+    requires_approval: bool
 
 
 class RunResponse(StrictModel):
@@ -150,7 +153,10 @@ class RunResponse(StrictModel):
                     tool_name=c.tool_name,
                     tool_call_id=c.tool_call_id,
                     args=dict(c.args),
+                    status=c.status,
                     approved=c.approved,
+                    error=c.error,
+                    requires_approval=c.requires_approval,
                 )
                 for c in run.tool_calls
             ],

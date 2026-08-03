@@ -12,9 +12,10 @@ gated by :mod:`backend.runtime.approvals`.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic_ai.tools import Tool
@@ -22,9 +23,49 @@ from pydantic_ai.tools import Tool
 from backend.runtime.logger import get_logger
 from backend.runtime.workspace import EventKind, WorkspaceService
 
-__all__ = ["ToolRegistry", "ToolSpec", "build_default_tools"]
+__all__ = ["ToolRegistry", "ToolSpec", "build_default_tools", "parse_when"]
 
 log = get_logger(__name__)
+
+
+def parse_when(value: str) -> datetime | None:
+    """Parse a model-supplied timestamp, or return None.
+
+    Tool parameters are typed ``str`` rather than ``datetime`` on purpose. A
+    strict annotation makes PydanticAI reject the call *before* the function
+    runs, and a model that keeps re-sending a bad value exhausts the retry
+    budget and takes the whole run down with it. Accepting a string and
+    validating here turns that into an ordinary tool result the model can read
+    and correct.
+    """
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _isolate(name: str, function: Callable[..., Any]) -> Callable[..., Any]:
+    """Stop one misbehaving tool from failing the whole run.
+
+    An exception raised inside a tool becomes a structured error result, so the
+    agent sees what went wrong and every sibling tool call still completes.
+    """
+
+    @functools.wraps(function)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return function(*args, **kwargs)
+        except Exception as exc:
+            log.exception("tool.raised", tool=name, error=str(exc))
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return wrapper
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +80,7 @@ class ToolSpec:
 
     def to_pydantic_tool(self) -> Tool[Any]:
         return Tool(
-            self.function,
+            _isolate(self.name, self.function),
             name=self.name,
             description=self.description,
             requires_approval=self.requires_approval,
@@ -127,16 +168,27 @@ def build_default_tools(workspace: WorkspaceService) -> ToolRegistry:
         return {"sent": True, "to": lead.email, "subject": subject}
 
     def schedule_showing(
-        lead_id: str, starts_at: datetime, location: str, title: str | None = None
+        lead_id: str, starts_at: str, location: str, title: str | None = None
     ) -> dict[str, Any]:
-        """Book a showing in the calendar. Requires the user's approval before booking."""
+        """Book a showing in the calendar. Requires the user's approval before booking.
+
+        starts_at must be an ISO-8601 timestamp, e.g. 2026-03-18T18:00:00Z.
+        """
         lead = workspace.lead(lead_id)
         if lead is None:
             return {"booked": False, "reason": f"no lead with id {lead_id!r}"}
 
+        when = parse_when(starts_at)
+        if when is None:
+            return {
+                "booked": False,
+                "reason": f"could not read {starts_at!r} as a time; "
+                "use ISO-8601 such as 2026-03-18T18:00:00Z",
+            }
+
         event = workspace.schedule_event(
             title=title or f"Showing — {lead.name}",
-            starts_at=starts_at,
+            starts_at=when,
             location=location,
             kind=EventKind.SHOWING,
             lead_id=lead_id,

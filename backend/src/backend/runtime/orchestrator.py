@@ -25,8 +25,10 @@ from pydantic_ai import (
     AgentRunResultEvent,
     DeferredToolRequests,
     FunctionToolCallEvent,
+    FunctionToolResultEvent,
     PartDeltaEvent,
 )
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import TextPartDelta
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDenied
 
@@ -41,6 +43,7 @@ from backend.runtime.runs import (
     RunStatus,
     RunStore,
     ToolCallRecord,
+    ToolCallStatus,
 )
 from backend.runtime.tools import ToolRegistry
 
@@ -178,14 +181,26 @@ class AgentRunner:
 
         for approval in run.pending_approvals:
             decision = by_id[approval.tool_call_id]
-            run.tool_calls.append(
-                ToolCallRecord(
+
+            # The call was already recorded as `proposed` when the model asked
+            # for it; update that entry rather than adding a second one.
+            record = run.record_for(approval.tool_call_id)
+            if record is None:
+                record = ToolCallRecord(
                     tool_name=approval.tool_name,
                     tool_call_id=approval.tool_call_id,
                     args=approval.args,
-                    approved=decision.approved,
+                    requires_approval=True,
                 )
-            )
+                run.tool_calls.append(record)
+
+            record.approved = decision.approved
+            if not decision.approved:
+                # Settled here: a denied call never executes, so no later
+                # result event should move it out of this state.
+                record.status = ToolCallStatus.DENIED
+                record.error = decision.reason
+
             self._bus.publish(
                 run.id,
                 EventType.APPROVAL_RESOLVED,
@@ -233,6 +248,12 @@ class AgentRunner:
             return self._fail(
                 run, started, code="agent_timeout", message=f"Run exceeded {self._timeout}s."
             )
+        except UnexpectedModelBehavior as exc:
+            # The model produced something the framework could not process —
+            # typically arguments that fail validation past the retry budget.
+            # Work the user already approved has still happened, so this is
+            # reported as partial rather than throwing that away.
+            return self._degrade(run, started, exc)
         except Exception as exc:
             log.exception("run.failed", run_id=run.id, agent=spec.name, error=str(exc))
             return self._fail(
@@ -265,25 +286,84 @@ class AgentRunner:
                         self._bus.publish(run.id, EventType.RUN_TOKEN, delta=delta)
 
                 elif isinstance(event, FunctionToolCallEvent):
-                    part = event.part
-                    args = part.args_as_dict() if hasattr(part, "args_as_dict") else {}
-                    run.tool_calls.append(
-                        ToolCallRecord(
-                            tool_name=part.tool_name,
-                            tool_call_id=part.tool_call_id,
-                            args=args,
-                        )
-                    )
-                    self._bus.publish(
-                        run.id,
-                        EventType.TOOL_CALLED,
-                        tool_name=part.tool_name,
-                        tool_call_id=part.tool_call_id,
-                        args=args,
-                    )
+                    self._on_tool_call(run, event)
+
+                elif isinstance(event, FunctionToolResultEvent):
+                    self._on_tool_result(run, event)
 
                 elif isinstance(event, AgentRunResultEvent):
                     self._finish(run, event)
+
+    def _on_tool_call(self, run: Run, event: FunctionToolCallEvent) -> None:
+        """Record a call the model has requested. Nothing has run yet."""
+        part = event.part
+        args = part.args_as_dict() if hasattr(part, "args_as_dict") else {}
+        gated = self._requires_approval(part.tool_name)
+
+        record = run.record_for(part.tool_call_id)
+        if record is None:
+            record = ToolCallRecord(
+                tool_name=part.tool_name,
+                tool_call_id=part.tool_call_id,
+                args=args,
+                status=ToolCallStatus.PROPOSED,
+                requires_approval=gated,
+            )
+            run.tool_calls.append(record)
+        else:
+            record.args = args or record.args
+
+        # A gated call is only ever *proposed* at this point. Publishing
+        # `tool.called` here would let a UI imply the action already happened.
+        self._bus.publish(
+            run.id,
+            EventType.TOOL_PROPOSED if gated else EventType.TOOL_CALLED,
+            tool_name=part.tool_name,
+            tool_call_id=part.tool_call_id,
+            args=args,
+            requires_approval=gated,
+        )
+
+    def _on_tool_result(self, run: Run, event: FunctionToolResultEvent) -> None:
+        """Record what a tool actually did."""
+        part = event.part
+        tool_call_id = getattr(part, "tool_call_id", "") or ""
+        tool_name = getattr(part, "tool_name", "") or ""
+        failed = getattr(part, "part_kind", "") == "retry-prompt"
+
+        record = run.record_for(tool_call_id)
+        if record is None:
+            record = ToolCallRecord(tool_name=tool_name, tool_call_id=tool_call_id, args={})
+            run.tool_calls.append(record)
+
+        # A denial already settled this call; the framework still reports a
+        # result for it, which must not overwrite the user's decision.
+        if record.status is ToolCallStatus.DENIED:
+            return
+
+        if failed:
+            record.status = ToolCallStatus.FAILED
+            record.error = str(getattr(part, "content", "") or "tool call failed")
+            self._bus.publish(
+                run.id,
+                EventType.TOOL_FAILED,
+                tool_name=record.tool_name,
+                tool_call_id=tool_call_id,
+                error=record.error,
+            )
+            log.warning("tool.failed", run_id=run.id, tool=record.tool_name)
+        else:
+            record.status = ToolCallStatus.EXECUTED
+            self._bus.publish(
+                run.id,
+                EventType.TOOL_EXECUTED,
+                tool_name=record.tool_name,
+                tool_call_id=tool_call_id,
+            )
+
+    def _requires_approval(self, tool_name: str) -> bool:
+        spec = self._tools.get(tool_name) if self._tools else None
+        return bool(spec and spec.requires_approval)
 
     def _finish(self, run: Run, event: AgentRunResultEvent[object]) -> None:
         result = event.result
@@ -321,16 +401,59 @@ class AgentRunner:
             return
 
         run.output = str(output)
-        run.status = RunStatus.COMPLETED
+        run.status = run.outcome_status()
         run.touch()
         self._bus.publish(
             run.id,
             EventType.RUN_COMPLETED,
             output=run.output,
+            status=run.status.value,
             usage=_usage_payload(run.usage),
+            tool_calls=_tool_call_payload(run),
         )
         self._bus.close(run.id)
-        log.info("run.completed", run_id=run.id, agent=run.agent)
+        log.info(
+            "run.completed",
+            run_id=run.id,
+            agent=run.agent,
+            status=run.status.value,
+            executed=sum(1 for c in run.tool_calls if c.status is ToolCallStatus.EXECUTED),
+            denied=sum(1 for c in run.tool_calls if c.status is ToolCallStatus.DENIED),
+            failed=sum(1 for c in run.tool_calls if c.status is ToolCallStatus.FAILED),
+        )
+
+    def _degrade(self, run: Run, started: float, exc: UnexpectedModelBehavior) -> Run:
+        """End a run that broke mid-flight without discarding what did happen."""
+        for call in run.tool_calls:
+            if call.status is ToolCallStatus.PROPOSED:
+                call.status = ToolCallStatus.FAILED
+                call.error = str(exc)
+
+        executed = [c for c in run.tool_calls if c.status is ToolCallStatus.EXECUTED]
+        run.status = RunStatus.PARTIAL if executed else RunStatus.FAILED
+        run.error = str(exc)
+        run.error_code = "model_behaviour"
+        run.duration_ms += int((time.perf_counter() - started) * 1000)
+        run.touch()
+
+        log.warning(
+            "run.degraded",
+            run_id=run.id,
+            status=run.status.value,
+            executed=len(executed),
+            error=str(exc),
+        )
+        self._bus.publish(
+            run.id,
+            EventType.RUN_COMPLETED if executed else EventType.RUN_FAILED,
+            status=run.status.value,
+            code="model_behaviour",
+            message=str(exc),
+            output=run.output,
+            tool_calls=_tool_call_payload(run),
+        )
+        self._bus.close(run.id)
+        return run
 
     def _fail(self, run: Run, started: float, *, code: str, message: str) -> Run:
         run.status = RunStatus.FAILED
@@ -345,6 +468,19 @@ class AgentRunner:
     def _describe(self, tool_name: str) -> str:
         spec = self._tools.get(tool_name) if self._tools else None
         return spec.description.strip() if spec else ""
+
+
+def _tool_call_payload(run: Run) -> list[dict[str, object]]:
+    return [
+        {
+            "tool_name": call.tool_name,
+            "tool_call_id": call.tool_call_id,
+            "status": call.status.value,
+            "approved": call.approved,
+            "error": call.error,
+        }
+        for call in run.tool_calls
+    ]
 
 
 def _usage_payload(usage: UsageSnapshot | None) -> dict[str, int]:

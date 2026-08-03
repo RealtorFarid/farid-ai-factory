@@ -161,6 +161,7 @@ const RUN_TONE: Record<RunStatus, Tone> = {
   running: "info",
   awaiting_approval: "warning",
   completed: "success",
+  partial: "warning",
   failed: "danger",
 };
 

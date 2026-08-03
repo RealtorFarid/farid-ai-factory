@@ -169,8 +169,12 @@ def test_denying_completes_the_run_without_the_side_effect(
         },
     ).json()
 
-    assert body["status"] == "completed"
-    assert any(c["approved"] is False for c in body["tool_calls"])
+    # Denied, not errored — the user still got an answer, but not everything
+    # the agent proposed happened, so the run is partial rather than completed.
+    assert body["status"] == "partial"
+    denied = [c for c in body["tool_calls"] if c["tool_name"] == "send_email"]
+    assert denied and denied[0]["status"] == "denied"
+    assert denied[0]["approved"] is False
     assert _email_needs_response(gated_client, "eml_001") is True
 
 
@@ -188,7 +192,7 @@ def test_omitted_decisions_are_denied_not_approved(gated_client: TestClient) -> 
         json={"decisions": [{"tool_call_id": pending["tool_call_id"], "approved": False}]},
     ).json()
 
-    assert body["status"] == "completed"
+    assert body["status"] == "partial"
     assert _email_needs_response(gated_client, "eml_001") is True
 
 

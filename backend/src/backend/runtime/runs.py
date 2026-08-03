@@ -32,6 +32,7 @@ __all__ = [
     "RunStatus",
     "RunStore",
     "ToolCallRecord",
+    "ToolCallStatus",
 ]
 
 MAX_RUNS = 500
@@ -41,6 +42,21 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
+    #: The agent finished, but at least one proposed action was denied or
+    #: failed. Distinct from FAILED: the user still gets an answer, and the
+    #: actions that were approved still took effect.
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+class ToolCallStatus(StrEnum):
+    #: A gated tool the agent wants to call. Nothing has run.
+    PROPOSED = "proposed"
+    #: Ran and returned a result.
+    EXECUTED = "executed"
+    #: The user declined it. Never ran.
+    DENIED = "denied"
+    #: Attempted but errored — bad arguments, or the tool itself raised.
     FAILED = "failed"
 
 
@@ -69,14 +85,26 @@ class ApprovalDecision:
     reason: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ToolCallRecord:
-    """An executed tool call, kept as the run's audit trail."""
+    """One tool call and what became of it — the run's audit trail.
+
+    Mutable because a gated call changes state over its life: proposed, then
+    approved or denied, then executed or failed.
+    """
 
     tool_name: str
     tool_call_id: str
     args: dict[str, Any]
+    status: ToolCallStatus = ToolCallStatus.PROPOSED
+    #: None until a human decides. Only meaningful for gated tools.
     approved: bool | None = None
+    error: str | None = None
+    requires_approval: bool = False
+
+    @property
+    def is_settled(self) -> bool:
+        return self.status is not ToolCallStatus.PROPOSED
 
 
 @dataclass(slots=True)
@@ -105,10 +133,27 @@ class Run:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in (RunStatus.COMPLETED, RunStatus.FAILED)
+        return self.status in (RunStatus.COMPLETED, RunStatus.PARTIAL, RunStatus.FAILED)
 
     def touch(self) -> None:
         self.updated_at = datetime.now(UTC)
+
+    def record_for(self, tool_call_id: str) -> ToolCallRecord | None:
+        """Find an existing audit entry, so a call is tracked, not duplicated."""
+        return next((c for c in self.tool_calls if c.tool_call_id == tool_call_id), None)
+
+    def outcome_status(self) -> RunStatus:
+        """The status a finished run should carry, given what its tools did.
+
+        A denial is a legitimate answer, not an error — but it does mean the
+        user did not get everything the agent proposed, so the run is PARTIAL
+        rather than COMPLETED. Saying "completed" after declining an action
+        would misrepresent what happened.
+        """
+        unfulfilled = {ToolCallStatus.DENIED, ToolCallStatus.FAILED}
+        if any(call.status in unfulfilled for call in self.tool_calls):
+            return RunStatus.PARTIAL
+        return RunStatus.COMPLETED
 
 
 class RunStore:

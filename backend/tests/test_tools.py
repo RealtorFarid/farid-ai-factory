@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from backend.runtime.tools import ToolRegistry, ToolSpec, build_default_tools
+from backend.runtime.tools import ToolRegistry, ToolSpec, build_default_tools, parse_when
 from backend.runtime.workspace import WorkspaceService
 from tests.conftest import FROZEN_NOW
 
@@ -101,7 +101,7 @@ def test_schedule_showing_creates_an_event(
         tools,
         "schedule_showing",
         lead_id="lead_001",
-        starts_at=FROZEN_NOW + timedelta(hours=6),
+        starts_at=(FROZEN_NOW + timedelta(hours=6)).isoformat(),
         location="155 Yonge St",
     )
     assert result["booked"] is True
@@ -110,8 +110,39 @@ def test_schedule_showing_creates_an_event(
 
 
 def test_schedule_showing_for_an_unknown_lead(tools: ToolRegistry) -> None:
-    result = _call(tools, "schedule_showing", lead_id="nope", starts_at=FROZEN_NOW, location="x")
+    result = _call(
+        tools, "schedule_showing", lead_id="nope", starts_at=FROZEN_NOW.isoformat(), location="x"
+    )
     assert result["booked"] is False
+
+
+def test_schedule_showing_rejects_an_unreadable_time_without_raising(
+    tools: ToolRegistry,
+) -> None:
+    """A bad timestamp must be a tool result, not an exception that kills the run."""
+    result = _call(tools, "schedule_showing", lead_id="lead_001", starts_at="a", location="x")
+    assert result["booked"] is False
+    assert "ISO-8601" in result["reason"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2026-03-18T18:00:00Z", True),
+        ("2026-03-18T18:00:00+00:00", True),
+        ("2026-03-18T18:00:00", True),  # naive input is assumed UTC
+        ("2026-03-18", True),
+        ("a", False),
+        ("", False),
+        ("   ", False),
+        ("next Thursday", False),
+    ],
+)
+def test_parse_when(value: str, expected: bool) -> None:
+    parsed = parse_when(value)
+    assert (parsed is not None) is expected
+    if parsed is not None:
+        assert parsed.tzinfo is not None  # always timezone-aware
 
 
 def test_complete_task(tools: ToolRegistry, workspace: WorkspaceService) -> None:

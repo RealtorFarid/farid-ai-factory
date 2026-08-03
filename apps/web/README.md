@@ -81,3 +81,31 @@ npm run build
 ```
 
 CI runs all three.
+
+## End-to-end acceptance
+
+`e2e/approval-gate.spec.mjs` drives a real browser and proves the approval gate
+by *effect*, not by reading the UI back to itself: it approves one action,
+declines another, then queries the API to confirm the approved one happened and
+the declined one did not.
+
+It runs against the **production build** via `vite preview`, not the dev
+server — no on-demand transform, and it exercises the artefact that ships.
+
+```bash
+# terminal 1 — API with the offline stub model, no key or cost
+cd backend && PROPILOT_DEFAULT_MODEL=stub PYTHONPATH=src python -m backend.cli
+
+# terminal 2
+npm run build && npm run preview
+WEB_URL=http://localhost:4173 npm run e2e
+```
+
+The stub proposes one ungated read and two gated actions against seeded
+records. PydanticAI's own `TestModel` is not usable here: it fabricates the
+string `'a'` for every parameter, so approving a call has no observable effect.
+
+Screenshots land in `e2e/screenshots/` (gitignored) on both pass and fail.
+
+The workspace store is in-memory, so **restart the API between runs** to reset
+state — the first run answers the email the second one expects to be pending.

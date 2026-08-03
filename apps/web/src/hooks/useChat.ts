@@ -3,15 +3,19 @@
  *
  * The transcript is a flat list of entries rather than a nested tree, because
  * an approval interleaves with the agent's prose and the user reads it in
- * order. A run that pauses appears as an approval entry the user can act on;
- * resolving it appends the continuation.
+ * order.
+ *
+ * Every gated action a run proposes is collected into **one** approval entry
+ * with a single confirm step. Submitting per-action would be wrong: the API
+ * denies anything left out of a decision set, so resolving one card would
+ * silently reject the others before the user had looked at them.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { startRunStream } from "@/lib/sse";
-import type { PendingApproval, Run } from "@/lib/types";
+import type { PendingApproval, Run, RunStatus, ToolCall } from "@/lib/types";
 
 export type Entry =
   | { kind: "user"; id: string; text: string }
@@ -24,11 +28,14 @@ export type Entry =
       streaming: boolean;
     }
   | {
-      kind: "approval";
+      kind: "approvals";
       id: string;
       runId: string;
-      approval: PendingApproval;
-      resolution: "pending" | "approved" | "denied" | "submitting";
+      approvals: PendingApproval[];
+      /** tool_call_id -> the user's choice, before submitting. */
+      choices: Record<string, boolean>;
+      state: "deciding" | "submitting" | "resolved";
+      outcome: { status: RunStatus; calls: ToolCall[] } | null;
     }
   | { kind: "error"; id: string; message: string; offline: boolean };
 
@@ -49,10 +56,45 @@ export function useChat(agent = "atlas") {
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Mirror of `entries` for callbacks that need to read current state without
+  // taking it as a dependency. A `setEntries` updater cannot be used for this:
+  // it runs during the next render, not at the call site.
+  const entriesRef = useRef<Entry[]>(entries);
+  entriesRef.current = entries;
+
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const patch = useCallback((id: string, update: (entry: Entry) => Entry) => {
     setEntries((current) => current.map((entry) => (entry.id === id ? update(entry) : entry)));
+  }, []);
+
+  /** Add a proposed action to this run's approval entry, creating it if needed. */
+  const addApproval = useCallback((runId: string, approval: PendingApproval) => {
+    setEntries((current) => {
+      const existing = current.find(
+        (e) => e.kind === "approvals" && e.runId === runId && e.state === "deciding",
+      );
+      if (existing && existing.kind === "approvals") {
+        if (existing.approvals.some((a) => a.tool_call_id === approval.tool_call_id)) {
+          return current;
+        }
+        return current.map((e) =>
+          e === existing ? { ...e, approvals: [...e.approvals, approval] } : e,
+        );
+      }
+      return [
+        ...current,
+        {
+          kind: "approvals",
+          id: nextId(),
+          runId,
+          approvals: [approval],
+          choices: {},
+          state: "deciding",
+          outcome: null,
+        },
+      ];
+    });
   }, []);
 
   const send = useCallback(
@@ -78,9 +120,7 @@ export function useChat(agent = "atlas") {
         })) {
           switch (event.type) {
             case "run.started":
-              patch(agentId, (e) =>
-                e.kind === "agent" ? { ...e, runId: event.run_id } : e,
-              );
+              patch(agentId, (e) => (e.kind === "agent" ? { ...e, runId: event.run_id } : e));
               break;
 
             case "run.token":
@@ -89,7 +129,9 @@ export function useChat(agent = "atlas") {
               );
               break;
 
-            case "tool.called":
+            // Only executed tools become chips. A proposed call has not run,
+            // and showing it as activity would misrepresent the gate.
+            case "tool.executed":
               patch(agentId, (e) =>
                 e.kind === "agent" && event.data.tool_name
                   ? { ...e, tools: [...e.tools, event.data.tool_name] }
@@ -98,21 +140,12 @@ export function useChat(agent = "atlas") {
               break;
 
             case "approval.required":
-              setEntries((current) => [
-                ...current,
-                {
-                  kind: "approval",
-                  id: nextId(),
-                  runId: event.run_id,
-                  approval: {
-                    tool_call_id: String(event.data.tool_call_id),
-                    tool_name: String(event.data.tool_name),
-                    args: (event.data.args ?? {}) as Record<string, unknown>,
-                    description: String(event.data.description ?? ""),
-                  },
-                  resolution: "pending",
-                },
-              ]);
+              addApproval(event.run_id, {
+                tool_call_id: String(event.data.tool_call_id),
+                tool_name: String(event.data.tool_name),
+                args: (event.data.args ?? {}) as Record<string, unknown>,
+                description: String(event.data.description ?? ""),
+              });
               patch(agentId, (e) => (e.kind === "agent" ? { ...e, streaming: false } : e));
               break;
 
@@ -156,34 +189,58 @@ export function useChat(agent = "atlas") {
           ]);
         }
       } finally {
-        // Drop any bubble that never produced text (an approval-only turn).
+        // Drop a bubble that produced nothing (an approval-only turn).
         setEntries((current) =>
-          current.filter((e) => !(e.kind === "agent" && !e.text && !e.streaming && !e.tools.length)),
+          current.filter(
+            (e) => !(e.kind === "agent" && !e.text && !e.streaming && !e.tools.length),
+          ),
         );
         setBusy(false);
         abortRef.current = null;
       }
     },
-    [agent, busy, patch],
+    [agent, busy, patch, addApproval],
+  );
+
+  /** Record a choice for one proposed action, before the batch is submitted. */
+  const choose = useCallback(
+    (entryId: string, toolCallId: string, approved: boolean) => {
+      patch(entryId, (e) =>
+        e.kind === "approvals"
+          ? { ...e, choices: { ...e.choices, [toolCallId]: approved } }
+          : e,
+      );
+    },
+    [patch],
   );
 
   /**
-   * Resolve one approval and append the continuation.
+   * Submit every decision for a run at once, then append the continuation.
    *
    * `POST /approvals` runs the agent to completion and returns the final run,
-   * so the answer is taken from the response rather than re-opening a stream.
+   * so the answer comes from the response rather than a second stream.
    */
-  const resolve = useCallback(
-    async (entryId: string, runId: string, toolCallId: string, approved: boolean) => {
-      patch(entryId, (e) =>
-        e.kind === "approval" ? { ...e, resolution: "submitting" } : e,
-      );
+  const submit = useCallback(
+    async (entryId: string) => {
+      const entry = entriesRef.current.find((e) => e.id === entryId);
+      if (!entry || entry.kind !== "approvals") return;
+
+      const { runId, approvals, choices } = entry;
+      if (approvals.some((a) => choices[a.tool_call_id] === undefined)) return;
+
+      patch(entryId, (e) => (e.kind === "approvals" ? { ...e, state: "submitting" } : e));
 
       let run: Run;
       try {
-        run = await api.resolveApprovals(runId, [{ tool_call_id: toolCallId, approved }]);
+        run = await api.resolveApprovals(
+          runId,
+          approvals.map((a) => ({
+            tool_call_id: a.tool_call_id,
+            approved: choices[a.tool_call_id] ?? false,
+          })),
+        );
       } catch (error) {
-        patch(entryId, (e) => (e.kind === "approval" ? { ...e, resolution: "pending" } : e));
+        patch(entryId, (e) => (e.kind === "approvals" ? { ...e, state: "deciding" } : e));
         setEntries((current) => [
           ...current,
           {
@@ -197,8 +254,8 @@ export function useChat(agent = "atlas") {
       }
 
       patch(entryId, (e) =>
-        e.kind === "approval"
-          ? { ...e, resolution: approved ? "approved" : "denied" }
+        e.kind === "approvals"
+          ? { ...e, state: "resolved", outcome: { status: run.status, calls: run.tool_calls } }
           : e,
       );
 
@@ -210,27 +267,20 @@ export function useChat(agent = "atlas") {
             id: nextId(),
             runId: run.id,
             text: run.output ?? "",
-            tools: run.tool_calls.filter((c) => c.approved !== false).map((c) => c.tool_name),
+            tools: run.tool_calls
+              .filter((c) => c.status === "executed")
+              .map((c) => c.tool_name),
             streaming: false,
           },
         ]);
       }
 
-      // A run can pause again if the agent proposes another gated action.
+      // A run can pause again if the agent proposes further gated actions.
       for (const approval of run.pending_approvals) {
-        setEntries((current) => [
-          ...current,
-          {
-            kind: "approval",
-            id: nextId(),
-            runId: run.id,
-            approval,
-            resolution: "pending",
-          },
-        ]);
+        addApproval(run.id, approval);
       }
     },
-    [patch],
+    [patch, addApproval],
   );
 
   const reset = useCallback(() => {
@@ -239,5 +289,5 @@ export function useChat(agent = "atlas") {
     setBusy(false);
   }, []);
 
-  return { entries, busy, send, resolve, reset };
+  return { entries, busy, send, choose, submit, reset };
 }

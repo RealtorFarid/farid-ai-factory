@@ -94,6 +94,38 @@ answers, and `/health/ready` reports `degraded` with
 `llm_credentials: missing`. A crash-looping container that cannot answer its own
 probe is strictly harder to diagnose.
 
+### A run's outcome is per-action, not binary
+
+A run that proposes several gated actions can have several different outcomes
+at once. `RunStatus.PARTIAL` says "you got an answer, but not everything the
+agent proposed happened", and every `ToolCallRecord` carries its own
+`ToolCallStatus` — `proposed`, `executed`, `denied` or `failed`.
+
+A denial is a legitimate answer rather than an error, but it still means the
+user did not get everything proposed, so it yields `PARTIAL`. Reporting
+`COMPLETED` after declining an action would misrepresent what happened.
+
+### One bad tool call must not discard approved work
+
+Three layers, because the failure can arrive at three different depths:
+
+1. **Forgiving signatures.** Tool parameters are `str`, not `datetime`. Strict
+   annotations fail *inside PydanticAI*, before the function runs, and a model
+   that repeats a bad value exhausts the retry budget and aborts the run.
+   Parsing in the tool turns that into an ordinary result the model can correct.
+2. **A wrapper per tool.** An exception inside a tool becomes
+   `{"ok": false, "error": ...}`, so siblings still complete.
+3. **`UnexpectedModelBehavior` degrades rather than fails.** If anything
+   already executed, the run ends `PARTIAL` with that work intact.
+
+### Proposed is not executed
+
+`tool.proposed` is emitted for a gated call the agent wants to make;
+`tool.executed` only after it actually ran. They are separate event types
+because a UI that renders "called" for a pending action tells the user
+something untrue about a gate whose whole purpose is that nothing has happened
+yet.
+
 ### Tracing is optional and cannot break the service
 
 Without Langfuse credentials, `configure_tracing` is a no-op. With them, every
