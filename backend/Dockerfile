@@ -3,7 +3,14 @@
 # --------------------------------------------------------------------------
 # Builder — resolve and install dependencies into a self-contained venv.
 # --------------------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:0.12-python3.12-bookworm-slim AS builder
+# This tag is built on python:3.12-slim-bookworm, which is why the runtime
+# stage below must stay on the same base: the venv copied between stages
+# hardcodes /usr/local/bin/python3.12.
+#
+# The uv version floats because astral-sh publishes no 0.12.x image tags.
+# Dependency determinism comes from uv.lock + --frozen, not from this tag.
+# Pinning both bases by digest is a Phase 4 hardening item.
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
