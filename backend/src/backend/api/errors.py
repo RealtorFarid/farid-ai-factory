@@ -20,7 +20,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.api.middleware import get_request_id
 from backend.runtime.agent import AgentNotFoundError
 from backend.runtime.logger import get_logger
+from backend.runtime.orchestrator import RunNotResumableError, UnknownApprovalError
 from backend.runtime.runner import AgentTimeoutError, PromptTooLongError
+from backend.runtime.runs import RunNotFoundError
 
 __all__ = ["error_response", "register_exception_handlers"]
 
@@ -31,6 +33,7 @@ _STATUS_CODES = {
     status.HTTP_400_BAD_REQUEST: "bad_request",
     status.HTTP_404_NOT_FOUND: "not_found",
     status.HTTP_405_METHOD_NOT_ALLOWED: "method_not_allowed",
+    status.HTTP_409_CONFLICT: "conflict",
     status.HTTP_413_CONTENT_TOO_LARGE: "payload_too_large",
     status.HTTP_422_UNPROCESSABLE_CONTENT: "validation_error",
     status.HTTP_500_INTERNAL_SERVER_ERROR: "internal_error",
@@ -67,6 +70,33 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             code="agent_not_found",
             message=f"No agent named {exc.name!r}.",
+        )
+
+    @app.exception_handler(RunNotFoundError)
+    async def _run_not_found(request: Request, exc: RunNotFoundError) -> JSONResponse:
+        return error_response(
+            request,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="run_not_found",
+            message=f"No run with id {exc.run_id!r}.",
+        )
+
+    @app.exception_handler(RunNotResumableError)
+    async def _run_not_resumable(request: Request, exc: RunNotResumableError) -> JSONResponse:
+        return error_response(
+            request,
+            status_code=status.HTTP_409_CONFLICT,
+            code="run_not_resumable",
+            message=str(exc),
+        )
+
+    @app.exception_handler(UnknownApprovalError)
+    async def _unknown_approval(request: Request, exc: UnknownApprovalError) -> JSONResponse:
+        return error_response(
+            request,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code="unknown_approval",
+            message=str(exc),
         )
 
     @app.exception_handler(PromptTooLongError)

@@ -10,9 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.errors import register_exception_handlers
 from backend.api.middleware import RequestContextMiddleware
-from backend.api.routes import agents, health
-from backend.runtime.agent import AgentRegistry, build_registry
+from backend.api.routes import agents, health, runs, workspace
 from backend.runtime.config import Settings, get_settings
+from backend.runtime.container import Runtime, build_runtime
 from backend.runtime.logger import configure_logging, get_logger
 from backend.runtime.tracing import configure_tracing, shutdown_tracing
 
@@ -23,30 +23,32 @@ log = get_logger(__name__)
 DESCRIPTION = """\
 The agent runtime behind Propilot AI.
 
-* `GET  /health` — liveness
-* `GET  /health/ready` — readiness
-* `GET  /v1/agents` — list agents
-* `POST /v1/agents/{name}/run` — run an agent, wait for the full result
-* `POST /v1/agents/{name}/stream` — run an agent, stream Server-Sent Events
+**Agents** — `GET /v1/agents`, `POST /v1/agents/{name}/run`,
+`POST /v1/agents/{name}/stream`
+
+**Runs and approvals** — `GET /v1/runs`, `GET /v1/runs/{id}`,
+`POST /v1/runs/{id}/approvals`, `GET /v1/runs/{id}/events` (SSE)
+
+**Workspace** — `GET /v1/workspace/dashboard` plus per-panel endpoints for
+tasks, leads, email, calendar and suggestions.
+
+Tools that send email, book time or complete work are gated: the run pauses,
+surfaces a pending approval, and only proceeds once a human decides.
 """
 
 
-def create_app(
-    settings: Settings | None = None,
-    registry: AgentRegistry | None = None,
-) -> FastAPI:
+def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
     """Build the application.
 
-    Both dependencies can be injected, which is what the test suite does to run
-    the whole stack against a stub model with no network access.
+    ``runtime`` can be injected, which is how the test suite runs the whole
+    stack against an offline model and a fixed workspace.
     """
     settings = settings or get_settings()
     configure_logging(level=settings.log_level, log_format=settings.log_format)
+    container = runtime if runtime is not None else build_runtime(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.settings = settings
-        app.state.registry = registry if registry is not None else build_registry(settings)
         app.state.tracing_enabled = configure_tracing(settings)
 
         if not settings.llm_configured:
@@ -57,7 +59,9 @@ def create_app(
             service=settings.app_name,
             version=settings.version,
             environment=settings.environment,
-            agents=app.state.registry.names(),
+            agents=container.agents.names(),
+            tools=len(container.tools),
+            gated_tools=[spec.name for spec in container.tools.requiring_approval()],
         )
         try:
             yield
@@ -75,10 +79,14 @@ def create_app(
         openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
 
-    # State is also set outside the lifespan so that constructing the app is
-    # enough for tests and tooling that never trigger startup.
     app.state.settings = settings
-    app.state.registry = registry if registry is not None else build_registry(settings)
+    app.state.runtime = container
+    app.state.registry = container.agents
+    app.state.tools = container.tools
+    app.state.workspace = container.workspace
+    app.state.runs = container.runs
+    app.state.bus = container.bus
+    app.state.runner = container.runner
 
     app.add_middleware(RequestContextMiddleware, header_name=settings.request_id_header)
     app.add_middleware(
@@ -93,4 +101,6 @@ def create_app(
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(agents.router)
+    app.include_router(runs.router)
+    app.include_router(workspace.router)
     return app

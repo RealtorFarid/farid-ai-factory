@@ -1,12 +1,11 @@
-"""Agent discovery, synchronous runs and SSE streaming."""
+"""Agent discovery, runs, and the event stream."""
 
 from __future__ import annotations
-
-import json
 
 from fastapi.testclient import TestClient
 
 from tests.conftest import STUB_OUTPUT
+from tests.sse import parse_sse
 
 
 def test_list_agents(client: TestClient) -> None:
@@ -16,22 +15,37 @@ def test_list_agents(client: TestClient) -> None:
     assert body["agents"][0]["description"]
 
 
-def test_run_returns_output_and_usage(client: TestClient) -> None:
+def test_list_tools_exposes_the_approval_policy(client: TestClient) -> None:
+    tools = client.get("/v1/agents/tools").json()["tools"]
+    by_name = {t["name"]: t for t in tools}
+
+    assert by_name["summarize_leads"]["requires_approval"] is False
+    assert by_name["send_email"]["requires_approval"] is True
+    assert by_name["schedule_showing"]["requires_approval"] is True
+    assert by_name["send_email"]["category"] == "email"
+    assert all(t["description"] for t in tools)
+
+
+def test_run_returns_a_completed_run(client: TestClient) -> None:
     response = client.post("/v1/agents/atlas/run", json={"prompt": "plan my week"})
     assert response.status_code == 200
     body = response.json()
+
+    assert body["status"] == "completed"
     assert body["output"] == STUB_OUTPUT
     assert body["agent"] == "atlas"
     assert body["model"] == "test"
+    assert body["id"].startswith("run_")
     assert body["duration_ms"] >= 0
-    assert body["usage"]["output_tokens"] > 0
     assert body["usage"]["requests"] == 1
-    assert body["request_id"] == response.headers["X-Request-ID"]
+    assert body["pending_approvals"] == []
+    assert response.headers["X-Request-ID"]
 
 
-def test_run_accepts_optional_session_id(client: TestClient) -> None:
+def test_run_records_the_session_id(client: TestClient) -> None:
     response = client.post("/v1/agents/atlas/run", json={"prompt": "hi", "session_id": "sess-1"})
     assert response.status_code == 200
+    assert response.json()["session_id"] == "sess-1"
 
 
 def test_run_rejects_unknown_agent(client: TestClient) -> None:
@@ -59,40 +73,23 @@ def test_run_rejects_oversized_prompt(client: TestClient) -> None:
     assert "200" in error["message"]
 
 
-def _parse_sse(raw: str) -> list[tuple[str, dict[str, object]]]:
-    """Parse an SSE body into (event, data) pairs."""
-    frames = []
-    for block in raw.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        event, data = "", "{}"
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                event = line.removeprefix("event: ")
-            elif line.startswith("data: "):
-                data = line.removeprefix("data: ")
-        frames.append((event, json.loads(data)))
-    return frames
-
-
-def test_stream_emits_tokens_then_done(client: TestClient) -> None:
+def test_stream_emits_started_tokens_and_completed(client: TestClient) -> None:
     with client.stream(
         "POST", "/v1/agents/atlas/stream", json={"prompt": "plan my week"}
     ) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        frames = _parse_sse(response.read().decode())
+        assert response.headers["X-Run-Id"].startswith("run_")
+        frames = parse_sse(response.read().decode())
 
     events = [name for name, _ in frames]
-    assert events[-1] == "done"
-    assert set(events[:-1]) == {"token"}
+    assert events[0] == "run.started"
+    assert events[-1] == "run.completed"
+    assert "run.token" in events
 
-    streamed = "".join(str(data["delta"]) for name, data in frames if name == "token")
-    done = frames[-1][1]
+    streamed = "".join(str(data["data"]["delta"]) for name, data in frames if name == "run.token")
     assert streamed == STUB_OUTPUT
-    assert done["output"] == STUB_OUTPUT
-    assert done["agent"] == "atlas"
-    assert isinstance(done["usage"], dict)
+    assert frames[-1][1]["data"]["output"] == STUB_OUTPUT
 
 
 def test_stream_validates_before_streaming(client: TestClient) -> None:

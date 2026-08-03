@@ -9,13 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from backend.runtime.config import Settings
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from backend.runtime.tools import ToolRegistry
 
 __all__ = [
     "AgentNotFoundError",
@@ -41,7 +45,9 @@ class AgentSpec:
     name: str
     description: str
     model: str
-    agent: Agent[None, str]
+    # Output is `str | DeferredToolRequests`: a gated tool makes the agent
+    # return a request for approval instead of an answer.
+    agent: Agent[None, Any]
 
 
 class AgentRegistry:
@@ -94,6 +100,14 @@ How you work:
 - Never guess. If a fact is missing, say what is missing and ask for it.
 - Prefer evidence over assertion; cite the source of any figure you use.
 - Keep answers concise and actionable.
+
+Using tools:
+- Read the workspace before answering questions about tasks, leads, email or
+  the calendar. Do not estimate what you can look up.
+- Sending email, booking time and completing tasks need the user's approval.
+  Propose them plainly and let the approval gate do its job — never imply an
+  action has happened before it is approved.
+- After an action is denied, acknowledge it and offer an alternative.
 """
 
 
@@ -119,8 +133,14 @@ def resolve_model(settings: Settings) -> Model | str:
     return OpenAIChatModel(spec.removeprefix("openai:"), provider=OpenAIProvider(api_key=key))
 
 
-def build_registry(settings: Settings) -> AgentRegistry:
-    """Construct the registry of agents available to this process."""
+def build_registry(settings: Settings, tools: ToolRegistry | None = None) -> AgentRegistry:
+    """Construct the registry of agents available to this process.
+
+    ``output_type`` includes :class:`DeferredToolRequests` so that a tool marked
+    ``requires_approval`` suspends the run and surfaces as a pending approval
+    instead of executing. That union is what makes the approval gate structural
+    rather than advisory.
+    """
     registry = AgentRegistry()
     registry.register(
         AgentSpec(
@@ -131,6 +151,8 @@ def build_registry(settings: Settings) -> AgentRegistry:
                 model=resolve_model(settings),
                 system_prompt=ATLAS_SYSTEM_PROMPT,
                 name="atlas",
+                output_type=[str, DeferredToolRequests],
+                tools=tools.as_pydantic_tools() if tools else [],
             ),
         )
     )

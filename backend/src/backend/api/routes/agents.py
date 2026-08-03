@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
-from dataclasses import asdict
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import StreamingResponse
 
-from backend.api.deps import RegistryDep, SettingsDep
+from backend.api.deps import RegistryDep, RunnerDep, ToolsDep
 from backend.api.middleware import get_request_id
 from backend.api.schemas import (
     AgentInfo,
@@ -17,22 +15,16 @@ from backend.api.schemas import (
     ErrorResponse,
     RunRequest,
     RunResponse,
-    UsageInfo,
+    ToolInfo,
+    ToolListResponse,
 )
+from backend.api.sse import SSE_HEADERS, sse_frame
 from backend.runtime.logger import get_logger
-from backend.runtime.runner import (
-    AgentTimeoutError,
-    DoneEvent,
-    TokenEvent,
-    run_agent,
-    stream_agent,
-    validate_prompt,
-)
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 log = get_logger(__name__)
 
-_ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
+_ERRORS: dict[int | str, dict[str, object]] = {
     status.HTTP_404_NOT_FOUND: {"model": ErrorResponse, "description": "Unknown agent"},
     status.HTTP_413_CONTENT_TOO_LARGE: {
         "model": ErrorResponse,
@@ -57,45 +49,43 @@ async def list_agents(registry: RegistryDep) -> AgentListResponse:
     )
 
 
-@router.post(
-    "/{agent_name}/run",
-    response_model=RunResponse,
-    responses=_ERROR_RESPONSES,
-    summary="Run an agent and wait for the complete result",
-)
-async def run(
-    agent_name: str,
-    body: RunRequest,
-    request: Request,
-    registry: RegistryDep,
-    settings: SettingsDep,
-) -> RunResponse:
-    spec = registry.get(agent_name)  # raises AgentNotFoundError -> 404
-    validate_prompt(body.prompt, settings.max_prompt_chars)  # -> 413
-
-    outcome = await run_agent(
-        spec, body.prompt, timeout_seconds=settings.agent_timeout_seconds
-    )  # -> 504 on timeout
-
-    return RunResponse(
-        agent=spec.name,
-        model=spec.model,
-        output=outcome.output,
-        usage=UsageInfo(**asdict(outcome.usage)),
-        duration_ms=outcome.duration_ms,
-        request_id=get_request_id(request),
+@router.get("/tools", response_model=ToolListResponse, summary="List agent tools")
+async def list_tools(tools: ToolsDep) -> ToolListResponse:
+    """Every tool an agent can call, and whether it is gated behind approval."""
+    return ToolListResponse(
+        tools=[
+            ToolInfo(
+                name=spec.name,
+                description=spec.description.strip(),
+                category=spec.category,
+                requires_approval=spec.requires_approval,
+            )
+            for spec in tools
+        ]
     )
 
 
-def _sse(event: str, data: dict[str, object]) -> str:
-    """Encode one Server-Sent Event frame."""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+@router.post(
+    "/{agent_name}/run",
+    response_model=RunResponse,
+    responses=_ERRORS,
+    summary="Run an agent and wait for it to finish or pause for approval",
+)
+async def run(agent_name: str, body: RunRequest, runner: RunnerDep) -> RunResponse:
+    """Execute a run to completion.
+
+    A run that calls a gated tool comes back with `status: awaiting_approval`
+    and a populated `pending_approvals` list rather than a final answer;
+    resolve it via `POST /v1/runs/{id}/approvals`.
+    """
+    result = await runner.start(agent_name, body.prompt, session_id=body.session_id)
+    return RunResponse.from_run(result)
 
 
 @router.post(
     "/{agent_name}/stream",
-    responses=_ERROR_RESPONSES,
-    summary="Run an agent and stream the result as Server-Sent Events",
+    responses=_ERRORS,
+    summary="Run an agent and stream its events as they happen",
     response_class=StreamingResponse,
 )
 async def stream(
@@ -103,46 +93,37 @@ async def stream(
     body: RunRequest,
     request: Request,
     registry: RegistryDep,
-    settings: SettingsDep,
+    runner: RunnerDep,
 ) -> StreamingResponse:
-    """Stream token deltas.
+    """Start a run and stream it.
 
-    Frames are ``token`` (incremental text), then exactly one terminal frame:
-    ``done`` on success or ``error`` on failure. Failures are reported in-band
-    because the 200 status line is already committed once streaming starts —
-    so both the agent lookup and prompt validation happen up front, where they
-    can still return a real HTTP error.
+    The run executes in the background and its events are relayed as they are
+    published: `run.started`, `run.token`, `tool.called`, `approval.required`,
+    then a terminal `run.completed` / `run.failed`.
+
+    Errors that can be detected up front — unknown agent, oversized prompt —
+    are raised before the stream opens, so they surface as real HTTP status
+    codes rather than as an in-band frame.
     """
-    spec = registry.get(agent_name)
-    validate_prompt(body.prompt, settings.max_prompt_chars)
+    spec = registry.get(agent_name)  # -> 404
     request_id = get_request_id(request)
+
+    # Start before the response opens so validation errors are real HTTP
+    # errors, and so the run id is known to the first frame.
+    started = await runner.begin(agent_name, body.prompt, session_id=body.session_id)
 
     async def frames() -> AsyncIterator[str]:
         try:
-            async for event in stream_agent(
-                spec, body.prompt, timeout_seconds=settings.agent_timeout_seconds
-            ):
-                if isinstance(event, TokenEvent):
-                    yield _sse("token", {"delta": event.delta})
-                elif isinstance(event, DoneEvent):
-                    yield _sse(
-                        "done",
-                        {
-                            "agent": spec.name,
-                            "model": spec.model,
-                            "output": event.output,
-                            "usage": asdict(event.usage),
-                            "duration_ms": event.duration_ms,
-                            "request_id": request_id,
-                        },
-                    )
-        except AgentTimeoutError as exc:
-            yield _sse(
-                "error", {"code": "agent_timeout", "message": str(exc), "request_id": request_id}
-            )
-        except Exception as exc:  # reported in-band; the status line is committed
-            log.exception("agent.stream.failed", agent=spec.name, error=str(exc))
-            yield _sse(
+            # The bus replays from sequence 0, so nothing published between
+            # begin() and subscribe() can be lost.
+            async with runner.bus.subscribe(started.run.id) as events:
+                async for event in events:
+                    if await request.is_disconnected():
+                        break
+                    yield sse_frame(event.type.value, event.to_payload(), event_id=event.sequence)
+        except Exception as exc:
+            log.exception("agents.stream_failed", agent=spec.name, error=str(exc))
+            yield sse_frame(
                 "error",
                 {
                     "code": "internal_error",
@@ -154,9 +135,5 @@ async def stream(
     return StreamingResponse(
         frames(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
-        },
+        headers={**SSE_HEADERS, "X-Run-Id": started.run.id},
     )
