@@ -10,6 +10,8 @@ import type {
   AgentInfo,
   ApiErrorBody,
   CalendarSummary,
+  CaptureResult,
+  ClaimInfo,
   Dashboard,
   EmailSummary,
   Lead,
@@ -80,6 +82,15 @@ export const api = {
   calendarSummary: (days = 7) =>
     request<CalendarSummary>(`/v1/workspace/calendar/summary?days=${days}`),
   suggestions: () => request<Suggestion[]>("/v1/workspace/suggestions"),
+
+  // ---- Capture -----------------------------------------------------------
+  capture: (leadId: string, note: string) =>
+    request<CaptureResult>("/v1/capture", {
+      method: "POST",
+      body: JSON.stringify({ lead_id: leadId, note }),
+    }),
+  leadClaims: (leadId: string) =>
+    request<ClaimInfo[]>(`/v1/leads/${encodeURIComponent(leadId)}/claims`),
 
   // ---- Agents ------------------------------------------------------------
   agents: () => request<{ agents: AgentInfo[]; default: string }>("/v1/agents"),

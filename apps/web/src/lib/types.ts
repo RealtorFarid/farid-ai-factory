@@ -219,3 +219,25 @@ export interface ApiErrorBody {
   request_id: string;
   details?: { location: string[]; message: string; type: string }[];
 }
+
+// ---- Capture -------------------------------------------------------------
+
+export interface ClaimInfo {
+  id: string;
+  predicate: string;
+  value: string;
+  confidence: number;
+  quote: string | null;
+  source_type: string;
+  asserted_at: string;
+  verified_at: string | null;
+}
+
+export interface CaptureResult {
+  lead_id: string;
+  summary: string;
+  follow_ups: string[];
+  claims: ClaimInfo[];
+  /** Facts the model proposed that it could not quote, and so were not stored. */
+  discarded: number;
+}

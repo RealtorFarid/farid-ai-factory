@@ -58,6 +58,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PROPILOT_OPENAI_API_KEY", "OPENAI_API_KEY"),
     )
     default_model: str = "openai:gpt-5"
+    #: Extraction is the highest-volume LLM call in the product, so it gets
+    #: its own routing slot: the cheapest model that passes the eval bar.
+    #: Falls back to default_model when unset.
+    extraction_model: str | None = None
     agent_timeout_seconds: float = Field(default=120.0, gt=0)
     max_prompt_chars: int = Field(default=20_000, gt=0)
 

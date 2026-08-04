@@ -19,10 +19,10 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
-__all__ = ["STUB_MODEL_NAME", "build_stub_model"]
+__all__ = ["STUB_MODEL_NAME", "build_stub_extraction_model", "build_stub_model"]
 
 STUB_MODEL_NAME = "stub"
 
@@ -44,6 +44,44 @@ def _tool_has_reported_back(messages: list[ModelMessage]) -> bool:
         for message in messages
         for part in getattr(message, "parts", [])
     )
+
+
+def _last_user_text(messages: list[ModelMessage]) -> str:
+    for message in reversed(messages):
+        for part in getattr(message, "parts", []):
+            if getattr(part, "part_kind", None) == "user-prompt":
+                content = getattr(part, "content", "")
+                if isinstance(content, str):
+                    return content
+    return ""
+
+
+def build_stub_extraction_model() -> FunctionModel:
+    """Offline extractor that quotes the note, so grounding is exercised."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        note = _last_user_text(messages)
+        sentences = [s.strip() for s in note.replace("\n", " ").split(".") if s.strip()]
+        claims = [
+            {
+                "predicate": f"note_detail_{index + 1}",
+                "value": sentence[:200],
+                "confidence": 0.7,
+                # Quoting verbatim is what lets the grounding check pass.
+                "quote": sentence,
+                "volatile": False,
+            }
+            for index, sentence in enumerate(sentences[:3])
+        ]
+        payload = {
+            "summary": (sentences[0][:200] if sentences else "Empty note."),
+            "claims": claims,
+            "follow_ups": ["Confirm the details captured above."] if claims else [],
+        }
+        tool_name = info.output_tools[0].name if info.output_tools else "final_result"
+        return ModelResponse(parts=[ToolCallPart(tool_name, json.dumps(payload))])
+
+    return FunctionModel(respond, model_name=f"{STUB_MODEL_NAME}-extractor")
 
 
 def build_stub_model() -> FunctionModel:

@@ -11,9 +11,11 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from backend.runtime.agent import AgentRegistry
+from backend.runtime.claims import ClaimStore
 from backend.runtime.config import Settings
 from backend.runtime.container import Runtime
 from backend.runtime.events import EventBus
+from backend.runtime.extraction import Extractor
 from backend.runtime.orchestrator import AgentRunner
 from backend.runtime.runs import RunStore
 from backend.runtime.tools import ToolRegistry
@@ -21,6 +23,8 @@ from backend.runtime.workspace import WorkspaceService
 
 __all__ = [
     "BusDep",
+    "ClaimsDep",
+    "ExtractorDep",
     "RegistryDep",
     "RunStoreDep",
     "RunnerDep",
@@ -66,11 +70,23 @@ def get_runner(request: Request) -> AgentRunner:
     return runner
 
 
+def get_claims(request: Request) -> ClaimStore:
+    claims: ClaimStore = request.app.state.claims
+    return claims
+
+
+def get_extractor(request: Request) -> Extractor:
+    extractor: Extractor = request.app.state.extractor
+    return extractor
+
+
 def get_runtime(request: Request) -> Runtime:
     runtime: Runtime = request.app.state.runtime
     return runtime
 
 
+ClaimsDep = Annotated[ClaimStore, Depends(get_claims)]
+ExtractorDep = Annotated[Extractor, Depends(get_extractor)]
 RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
 SettingsDep = Annotated[Settings, Depends(get_settings_from_state)]
 RegistryDep = Annotated[AgentRegistry, Depends(get_registry)]

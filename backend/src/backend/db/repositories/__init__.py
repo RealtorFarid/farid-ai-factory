@@ -2,14 +2,7 @@
 
 from __future__ import annotations
 
-from backend.db.repositories.claims import (
-    Claim,
-    ClaimRepository,
-    DecayPolicy,
-    LegalBasis,
-    Sensitivity,
-    SourceType,
-)
+from backend.db.repositories.claims import ClaimRepository
 from backend.db.repositories.consent import (
     Channel,
     ConsentDecision,
@@ -21,15 +14,10 @@ from backend.db.repositories.workspace import PostgresWorkspaceStore
 
 __all__ = [
     "Channel",
-    "Claim",
     "ClaimRepository",
     "ConsentDecision",
     "ConsentRepository",
     "ConsentStatus",
-    "DecayPolicy",
-    "LegalBasis",
     "PostgresRunStore",
     "PostgresWorkspaceStore",
-    "Sensitivity",
-    "SourceType",
 ]

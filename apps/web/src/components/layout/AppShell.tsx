@@ -9,6 +9,7 @@ import {
   IconChat,
   IconInbox,
   IconLeads,
+  IconSpark,
   IconMenu,
   IconToday,
 } from "./Icons";
@@ -26,6 +27,7 @@ interface NavItem {
 const PRIMARY: NavItem[] = [
   { to: "/", label: "Today", icon: IconToday },
   { to: "/chat", label: "Ask Atlas", icon: IconChat },
+  { to: "/capture", label: "Capture", icon: IconSpark },
 ];
 
 const WORKSPACE: NavItem[] = [
@@ -48,6 +50,7 @@ const WORKSPACE: NavItem[] = [
 const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/": { title: "Today", subtitle: "What needs your attention" },
   "/chat": { title: "Ask Atlas", subtitle: "Your executive agent" },
+  "/capture": { title: "Capture", subtitle: "Say what happened — Atlas remembers it" },
   "/leads": { title: "Leads", subtitle: "Your pipeline, hottest first" },
   "/inbox": { title: "Inbox", subtitle: "Threads waiting on you" },
   "/calendar": { title: "Calendar", subtitle: "The next seven days" },

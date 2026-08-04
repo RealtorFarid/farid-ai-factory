@@ -24,10 +24,9 @@ from backend.db.repositories import (
     ConsentRepository,
     PostgresRunStore,
     PostgresWorkspaceStore,
-    Sensitivity,
-    SourceType,
 )
 from backend.db.seed import seed_workspace
+from backend.runtime.claims import Sensitivity, SourceType
 from backend.runtime.config import Settings
 from backend.runtime.container import build_runtime
 from backend.runtime.runs import ApprovalDecision, RunNotFoundError, RunStatus

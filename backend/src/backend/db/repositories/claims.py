@@ -1,19 +1,13 @@
-"""The Claim Ledger — append-only facts about people, with provenance.
+"""Postgres implementation of :class:`ClaimStore`.
 
-No feature writes here yet; the capture pipeline will. The ledger exists now
-because provenance cannot be back-filled: a fact stored today without a source
-is permanently unverifiable, and the schema is the one decision in this system
-that is genuinely irreversible.
-
-Corrections supersede rather than overwrite, so the belief state at any past
-date stays reconstructable.
+Value types live in :mod:`backend.runtime.claims`; this module is only the
+storage. Corrections supersede rather than overwrite, so the belief state on
+any past date stays reconstructable.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
@@ -21,67 +15,16 @@ from sqlalchemy import select
 
 from backend.db.engine import Database
 from backend.db.models import ClaimRow
+from backend.runtime.claims import (
+    Claim,
+    DecayPolicy,
+    LegalBasis,
+    Sensitivity,
+    SourceType,
+    guard_claim,
+)
 
-__all__ = [
-    "Claim",
-    "ClaimRepository",
-    "DecayPolicy",
-    "LegalBasis",
-    "Sensitivity",
-    "SourceType",
-]
-
-
-class SourceType(StrEnum):
-    CONVERSATION = "conversation"
-    OPERATOR = "operator"
-    CLIENT = "client"
-    IMPORT = "import"
-    PUBLIC = "public"
-    INFERENCE = "inference"
-
-
-class Sensitivity(StrEnum):
-    NORMAL = "normal"
-    SENSITIVE = "sensitive"
-    #: Fair-housing protected: national origin, religion, familial status,
-    #: disability, age. Never model-inferred; never exposed to property,
-    #: pricing or routing surfaces.
-    PROTECTED = "protected"
-
-
-class LegalBasis(StrEnum):
-    CONSENT = "consent"
-    CONTRACT = "contract"
-    LEGITIMATE_INTEREST = "legitimate_interest"
-
-
-class DecayPolicy(StrEnum):
-    #: Birthdays, names of children.
-    STATIC = "static"
-    #: Employer, neighbourhood — true for a while.
-    SLOW = "slow"
-    #: "Looking to buy in spring" — worthless in six months.
-    VOLATILE = "volatile"
-
-
-@dataclass(frozen=True, slots=True)
-class Claim:
-    id: str
-    lead_id: str
-    predicate: str
-    object_value: str
-    confidence: float
-    source_type: SourceType
-    source_ref: str | None
-    source_quote: str | None
-    sensitivity: Sensitivity
-    legal_basis: LegalBasis
-    decay_policy: DecayPolicy
-    asserted_at: datetime
-    verified_at: datetime | None
-    status: str
-    object_data: dict[str, Any] | None = None
+__all__ = ["ClaimRepository"]
 
 
 class ClaimRepository:
@@ -110,10 +53,7 @@ class ClaimRepository:
         housing exposure, so it is rejected at the boundary rather than left to
         callers to remember.
         """
-        if sensitivity is Sensitivity.PROTECTED and source_type is SourceType.INFERENCE:
-            raise ValueError(
-                f"protected attributes must be declared, never inferred (predicate={predicate!r})"
-            )
+        guard_claim(sensitivity, source_type, predicate)
         if not 0.0 <= confidence <= 1.0:
             raise ValueError(f"confidence must be between 0 and 1, got {confidence}")
 

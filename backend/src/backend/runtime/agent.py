@@ -112,7 +112,7 @@ Using tools:
 """
 
 
-def resolve_model(settings: Settings) -> Model | str:
+def resolve_model(settings: Settings, spec: str | None = None) -> Model | str:
     """Turn ``Settings.default_model`` into something an ``Agent`` can use.
 
     For OpenAI we build the provider explicitly so the credential comes from
@@ -122,7 +122,7 @@ def resolve_model(settings: Settings) -> Model | str:
     rather than crash-loop before it can answer any probe. A real request then
     fails with an authentication error, which is the honest outcome.
     """
-    spec = settings.default_model
+    spec = spec or settings.default_model
     if spec == STUB_MODEL_NAME:
         return build_stub_model()
     if not spec.startswith("openai:"):

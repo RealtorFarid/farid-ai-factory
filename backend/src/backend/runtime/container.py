@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from backend.runtime.agent import AgentRegistry, build_registry
+from backend.runtime.claims import ClaimStore, InMemoryClaimStore
 from backend.runtime.config import Settings
 from backend.runtime.events import EventBus
+from backend.runtime.extraction import Extractor, build_extractor
 from backend.runtime.logger import get_logger
 from backend.runtime.orchestrator import AgentRunner
 from backend.runtime.runs import InMemoryRunStore, RunStore
@@ -41,6 +43,8 @@ class Runtime:
     runs: RunStore
     bus: EventBus
     runner: AgentRunner
+    claims: ClaimStore
+    extractor: Extractor
     database: Database | None = None
 
     def shutdown(self) -> None:
@@ -54,6 +58,7 @@ def build_runtime(
     store: WorkspaceStore | None = None,
     agents: AgentRegistry | None = None,
     runs: RunStore | None = None,
+    claims: ClaimStore | None = None,
     database: Database | None = None,
 ) -> Runtime:
     """Assemble the runtime.
@@ -62,12 +67,13 @@ def build_runtime(
     an offline model without patching globals.
     """
     if store is None and runs is None and settings.persistence_enabled:
-        database, store, runs = _build_persistent(settings, database)
+        database, store, runs, claims = _build_persistent(settings, database, claims)
 
     workspace = WorkspaceService(store or InMemoryWorkspaceStore())
     tools = build_default_tools(workspace)
     registry = agents if agents is not None else build_registry(settings, tools)
     run_store = runs if runs is not None else InMemoryRunStore()
+    claim_store = claims if claims is not None else InMemoryClaimStore()
     bus = EventBus()
 
     runner = AgentRunner(
@@ -87,17 +93,23 @@ def build_runtime(
         runs=run_store,
         bus=bus,
         runner=runner,
+        claims=claim_store,
+        extractor=build_extractor(settings, claim_store),
         database=database,
     )
 
 
 def _build_persistent(
-    settings: Settings, database: Database | None
-) -> tuple[Database, WorkspaceStore, RunStore]:
+    settings: Settings, database: Database | None, claims: ClaimStore | None
+) -> tuple[Database, WorkspaceStore, RunStore, ClaimStore]:
     """Wire the Postgres-backed stores. Imported lazily so the in-memory path
     never pays for the database dependencies."""
     from backend.db.engine import Database as Db
-    from backend.db.repositories import PostgresRunStore, PostgresWorkspaceStore
+    from backend.db.repositories import (
+        ClaimRepository,
+        PostgresRunStore,
+        PostgresWorkspaceStore,
+    )
     from backend.db.seed import seed_workspace
 
     assert settings.database_url is not None
@@ -111,4 +123,9 @@ def _build_persistent(
     seeded = seed_workspace(db, org)
     log.info("runtime.persistence_enabled", org_id=org, seeded=seeded)
 
-    return db, PostgresWorkspaceStore(db, org), PostgresRunStore(db, org)
+    return (
+        db,
+        PostgresWorkspaceStore(db, org),
+        PostgresRunStore(db, org),
+        claims or ClaimRepository(db, org),
+    )

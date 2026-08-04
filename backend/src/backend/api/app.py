@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.errors import register_exception_handlers
 from backend.api.middleware import RequestContextMiddleware
-from backend.api.routes import agents, health, runs, workspace
+from backend.api.routes import agents, capture, health, runs, workspace
 from backend.runtime.config import Settings, get_settings
 from backend.runtime.container import Runtime, build_runtime
 from backend.runtime.logger import configure_logging, get_logger
@@ -89,6 +89,8 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     app.state.runs = container.runs
     app.state.bus = container.bus
     app.state.runner = container.runner
+    app.state.claims = container.claims
+    app.state.extractor = container.extractor
 
     app.add_middleware(RequestContextMiddleware, header_name=settings.request_id_header)
     app.add_middleware(
@@ -105,4 +107,5 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     app.include_router(agents.router)
     app.include_router(runs.router)
     app.include_router(workspace.router)
+    app.include_router(capture.router)
     return app

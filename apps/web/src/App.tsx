@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { CapturePage } from "@/pages/Capture";
 import { ChatPage } from "@/pages/ChatPage";
 import { TodayPage } from "@/pages/Today";
 import { ActivityPage, CalendarPage, InboxPage, LeadsPage } from "@/pages/Workspace";
@@ -11,6 +12,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<TodayPage />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/capture" element={<CapturePage />} />
         <Route path="/leads" element={<LeadsPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
