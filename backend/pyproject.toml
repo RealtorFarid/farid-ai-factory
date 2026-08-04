@@ -15,6 +15,9 @@ dependencies = [
     "structlog>=24.4",
     "python-dotenv>=1.0",
     "langfuse>=3.7.0",
+    "sqlalchemy>=2.0.36",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.14",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +45,8 @@ build-backend = "uv_build"
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# Alembic writes these; they are generated artefacts, not hand-maintained code.
+extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = [

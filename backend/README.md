@@ -39,6 +39,13 @@ src/backend/
     memory.py        Phase 2 — pgvector memory
     tools.py         Phase 2 — tool registry
     main.py          Smoke script: one real agent turn, no HTTP
+    stub.py          Offline model for local verification (PROPILOT_DEFAULT_MODEL=stub)
+  db/
+    models.py        Schema: tenancy, workspace, claims, consent, runs
+    engine.py        Engine and sessions (sync — see D-021)
+    seed.py          First-run starter data, idempotent
+    repositories/    Postgres implementations of the runtime protocols
+migrations/          Alembic; applied as a deploy step, never on boot
 ```
 
 The Phase 2 modules are documented placeholders, not dead files. The seams are
@@ -56,4 +63,15 @@ developer's machine.
 uv run pytest --cov --cov-report=term-missing
 ```
 
-Coverage is gated at 90% (currently 99%).
+Coverage is gated at 90%.
+
+Persistence tests need a database and skip without one:
+
+```bash
+createdb propilot_test
+PROPILOT_TEST_DATABASE_URL=postgresql+psycopg://$(whoami)@localhost:5432/propilot_test \
+  uv run pytest tests/test_persistence.py
+```
+
+They drop and recreate the schema per test, so never point that variable at a
+database you care about.

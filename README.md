@@ -62,6 +62,9 @@ docker compose up --build
 | `make format` | Apply formatting and safe lint fixes |
 | `make smoke` | One agent turn against a real model (needs credentials) |
 | `make docker-up` | Build and start the container stack |
+| `make db-start` · `db-create` · `db-migrate` | Local Postgres setup |
+| `make db-revision m="..."` | Autogenerate a migration |
+| `make db-check` | Fail if models have drifted from migrations |
 
 ---
 
@@ -102,6 +105,38 @@ Streaming emits `token` frames followed by exactly one terminal `done` or
 oversized prompt) are returned as real HTTP status codes instead.
 
 ---
+
+## Persistence
+
+Off by default. Unset `PROPILOT_DATABASE_URL` and everything runs in memory —
+which is what the demo, the e2e suite and most tests use. Set it and runs,
+approvals and the workspace survive a restart, with no other code change:
+storage is chosen in one place (`runtime/container.py`) behind protocols the
+rest of the system already depended on.
+
+```bash
+make db-start db-create        # local Postgres 17
+echo 'PROPILOT_DATABASE_URL=postgresql+psycopg://'$(whoami)'@localhost:5432/propilot' >> backend/.env
+make db-migrate
+make run
+```
+
+Three things in the schema exist before any real data, because none of them can
+be added later ([D-022](research/architecture/DECISIONS.md)):
+
+| | Why it cannot wait |
+|---|---|
+| **Tenancy** (`org_id` everywhere) | Adding it after rows exist is a migration with no correct answer |
+| **Claim Ledger** (source, confidence, legal basis, sensitivity, decay) | A fact stored without a source is permanently unverifiable — there is nobody left to ask |
+| **Consent Ledger** (per person, per channel, per jurisdiction) | Contact history without consent records is a compliance problem, not a schema problem |
+
+Claims are append-only: corrections supersede rather than overwrite, so what was
+believed on any past date stays reconstructable. Protected attributes — the ones
+fair housing law covers — cannot be recorded by inference, and are withheld from
+any caller that does not explicitly ask for them.
+
+Migrations are a deploy step, never run on startup ([D-023](research/architecture/DECISIONS.md)).
+CI runs `alembic check`, so models drifting from migrations fails the build.
 
 ## Configuration
 

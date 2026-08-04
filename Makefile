@@ -42,6 +42,32 @@ typecheck: ## Run mypy in strict mode
 
 check: lint typecheck cov web-check ## Run everything CI runs
 
+# ---- Database --------------------------------------------------------------
+# Persistence is opt-in: set PROPILOT_DATABASE_URL in backend/.env to turn it
+# on. Without it the app runs entirely in memory, which is what the e2e suite
+# and demos use.
+
+db-start: ## Start the local Postgres service
+	brew services start postgresql@17
+
+db-create: ## Create the local development and test databases
+	@createdb propilot 2>/dev/null && echo "created propilot" || echo "propilot already exists"
+	@createdb propilot_test 2>/dev/null && echo "created propilot_test" || echo "propilot_test already exists"
+
+db-migrate: ## Apply migrations to PROPILOT_DATABASE_URL
+	cd $(BACKEND) && uv run alembic upgrade head
+
+db-revision: ## Autogenerate a migration:  make db-revision m="add x"
+	cd $(BACKEND) && uv run alembic revision --autogenerate -m "$(m)"
+
+db-check: ## Fail if the models have drifted from the migrations
+	cd $(BACKEND) && uv run alembic check
+
+db-reset: ## Drop and recreate the LOCAL dev database, then migrate
+	@printf 'This destroys the local propilot database. Continue? [y/N] ' && read ans && [ "$$ans" = "y" ]
+	dropdb --if-exists propilot && createdb propilot
+	$(MAKE) db-migrate
+
 # ---- Web -------------------------------------------------------------------
 
 web-install: ## Install web dependencies

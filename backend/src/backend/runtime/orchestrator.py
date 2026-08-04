@@ -221,6 +221,7 @@ class AgentRunner:
         run.pending_approvals = []
         run.deferred = None
         run.touch()
+        self._runs.save(run)
 
         self._bus.reopen(run.id)
         self._bus.publish(run.id, EventType.RUN_RESUMED)
@@ -262,6 +263,7 @@ class AgentRunner:
 
         run.duration_ms += int((time.perf_counter() - started) * 1000)
         run.touch()
+        self._runs.save(run)
         return run
 
     async def _consume_stream(
@@ -384,6 +386,7 @@ class AgentRunner:
             ]
             run.status = RunStatus.AWAITING_APPROVAL
             run.touch()
+            self._runs.save(run)
 
             for approval in run.pending_approvals:
                 self._bus.publish(
@@ -403,6 +406,7 @@ class AgentRunner:
         run.output = str(output)
         run.status = run.outcome_status()
         run.touch()
+        self._runs.save(run)
         self._bus.publish(
             run.id,
             EventType.RUN_COMPLETED,
@@ -435,6 +439,7 @@ class AgentRunner:
         run.error_code = "model_behaviour"
         run.duration_ms += int((time.perf_counter() - started) * 1000)
         run.touch()
+        self._runs.save(run)
 
         log.warning(
             "run.degraded",
@@ -461,6 +466,7 @@ class AgentRunner:
         run.error_code = code
         run.duration_ms += int((time.perf_counter() - started) * 1000)
         run.touch()
+        self._runs.save(run)
         self._bus.publish(run.id, EventType.RUN_FAILED, code=code, message=message)
         self._bus.close(run.id)
         return run

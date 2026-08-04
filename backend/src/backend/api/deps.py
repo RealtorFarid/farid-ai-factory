@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 
 from backend.runtime.agent import AgentRegistry
 from backend.runtime.config import Settings
+from backend.runtime.container import Runtime
 from backend.runtime.events import EventBus
 from backend.runtime.orchestrator import AgentRunner
 from backend.runtime.runs import RunStore
@@ -23,6 +24,7 @@ __all__ = [
     "RegistryDep",
     "RunStoreDep",
     "RunnerDep",
+    "RuntimeDep",
     "SettingsDep",
     "ToolsDep",
     "WorkspaceDep",
@@ -64,6 +66,12 @@ def get_runner(request: Request) -> AgentRunner:
     return runner
 
 
+def get_runtime(request: Request) -> Runtime:
+    runtime: Runtime = request.app.state.runtime
+    return runtime
+
+
+RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
 SettingsDep = Annotated[Settings, Depends(get_settings_from_state)]
 RegistryDep = Annotated[AgentRegistry, Depends(get_registry)]
 ToolsDep = Annotated[ToolRegistry, Depends(get_tools)]

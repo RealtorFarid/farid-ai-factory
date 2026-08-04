@@ -88,7 +88,28 @@ whole run and silently discarded the approved one. Three defects behind it.
 - [x] 22 regression tests, asserted by effect on the workspace
 - [x] Browser end-to-end acceptance suite (`npm run e2e`)
 
-## Sprint 4B — Persistence
+## Sprint 4B — The Ledger Foundation ✅
+
+Persistence, designed provenance-first rather than as a port of the in-memory
+stores. The schema is the one decision here that cannot be retrofitted.
+
+- [x] Postgres + SQLAlchemy + Alembic; migrations are a deploy step, never
+      run on boot (D-023)
+- [x] **Tenancy** — `org_id` on every business row, before any data exists
+- [x] **Claim Ledger** — append-only facts with source, confidence, legal
+      basis, sensitivity and decay. Corrections supersede; history stays
+      reconstructable. Protected attributes cannot be inferred, and are
+      withheld from callers that do not explicitly ask.
+- [x] **Consent Ledger** — per person, per channel, per jurisdiction. Absence
+      of a record is refusal.
+- [x] Runs, approvals and tool-call audit persisted, including PydanticAI
+      continuation state, so a paused approval survives a restart
+- [x] Postgres services in compose and CI; `alembic check` fails the build on
+      model drift
+- [x] 15 persistence tests; verified live by killing the server mid-approval
+      and resuming in a new process
+
+## Sprint 4C — Developer experience
 
 ## Sprint 4C — Developer experience
 

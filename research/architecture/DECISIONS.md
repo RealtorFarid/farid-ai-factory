@@ -125,6 +125,92 @@ Accepted
 
 ---
 
+## D-021
+
+Question
+
+Async or synchronous SQLAlchemy?
+
+Decision
+
+Synchronous. Async callers offload through `anyio.to_thread` where it matters.
+
+Reason
+
+Queries here are small and indexed; the database is not the latency budget.
+FastAPI already runs plain `def` handlers in a worker thread and PydanticAI
+runs sync tools off the event loop, so the sync path is non-blocking where it
+counts without any extra machinery. The async ORM costs more to own — session
+lifecycles, greenlet context, lazy-load surprises — and this codebase must stay
+comprehensible to one engineer for years. Revisit only if measurement shows
+connection concurrency is the bottleneck.
+
+Status
+
+Accepted
+
+---
+
+## D-022
+
+Question
+
+What must the first schema contain, before any real data exists?
+
+Decision
+
+Tenancy, provenance and consent. Specifically: `org_id` on every business row,
+a `claims` table where each fact carries source, confidence, legal basis,
+sensitivity and decay, and a `consents` table keyed per person, per channel,
+per jurisdiction.
+
+Reason
+
+These three cannot be retrofitted. Adding `org_id` after rows exist is a
+migration with no correct answer. A fact stored without a source is
+permanently unverifiable — there is nobody to ask later. And contact history
+accumulated before a consent record is a compliance problem, not a schema
+problem: CASL requires demonstrable express consent and TCPA damages are per
+message.
+
+Claims are append-only. A correction inserts a new row and marks the old one
+superseded, so what was believed on any past date stays reconstructable.
+
+Consequence
+
+`claims` and `consents` exist with no feature writing to them yet. That is
+deliberate: the capture pipeline is the first writer, and it must not be the
+thing that decides the shape.
+
+Status
+
+Accepted
+
+---
+
+## D-023
+
+Question
+
+Does the application run migrations on startup?
+
+Decision
+
+No. `alembic upgrade head` is a separate deploy step, shipped in the same image.
+
+Reason
+
+Auto-migrating on boot means a rolling deploy can have two versions racing to
+alter the same schema, and a failed migration takes down every replica at once
+rather than one deploy job. CI additionally runs `alembic check`, so models
+drifting from migrations fails the build rather than surfacing in production.
+
+Status
+
+Accepted
+
+---
+
 ## D-006
 
 Question

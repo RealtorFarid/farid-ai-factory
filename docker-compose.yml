@@ -3,9 +3,40 @@
 #   cp backend/.env.example backend/.env   # then add your key
 #   docker compose up --build
 #
-# Phase 2 adds postgres (pgvector) and langfuse services here.
+# Migrations run as a one-shot job before the API starts — never automatically
+# inside the app, so a rolling deploy can never have two versions racing to
+# alter the same schema.
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: propilot
+      POSTGRES_PASSWORD: propilot
+      POSTGRES_DB: propilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - propilot-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U propilot -d propilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: propilot-backend:local
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PROPILOT_DATABASE_URL: postgresql+psycopg://propilot:propilot@postgres:5432/propilot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: ./backend
@@ -18,10 +49,16 @@ services:
       PROPILOT_LOG_FORMAT: json
       PROPILOT_LOG_LEVEL: INFO
       PROPILOT_CORS_ORIGINS: http://localhost:5173
+      PROPILOT_DATABASE_URL: postgresql+psycopg://propilot:propilot@postgres:5432/propilot
     env_file:
       # Optional so the stack still builds on a fresh clone.
       - path: ./backend/.env
         required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test:
@@ -33,3 +70,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+volumes:
+  propilot-pgdata:

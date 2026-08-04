@@ -15,7 +15,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -26,6 +26,7 @@ from backend.runtime.runner import UsageSnapshot
 
 __all__ = [
     "ApprovalDecision",
+    "InMemoryRunStore",
     "PendingApproval",
     "Run",
     "RunNotFoundError",
@@ -156,7 +157,27 @@ class Run:
         return RunStatus.COMPLETED
 
 
-class RunStore:
+class RunStore(Protocol):
+    """Where runs live between HTTP calls.
+
+    Two implementations: in-memory (tests, demos) and Postgres (production).
+    ``save`` is the seam that makes durability possible — the orchestrator
+    calls it at every state transition, and the in-memory store ignores it
+    because it already holds the object.
+    """
+
+    def create(
+        self, *, agent: str, model: str, prompt: str, session_id: str | None = None
+    ) -> Run: ...
+
+    def get(self, run_id: str) -> Run: ...
+
+    def list(self, *, limit: int = 50, session_id: str | None = None) -> list[Run]: ...
+
+    def save(self, run: Run) -> None: ...
+
+
+class InMemoryRunStore:
     """A bounded, insertion-ordered store of runs.
 
     Oldest runs are evicted once ``max_runs`` is exceeded, so a long-lived
@@ -197,6 +218,9 @@ class RunStore:
         if session_id is not None:
             runs = [run for run in runs if run.session_id == session_id]
         return sorted(runs, key=lambda r: r.created_at, reverse=True)[:limit]
+
+    def save(self, run: Run) -> None:
+        """No-op: this store already holds the object the caller mutated."""
 
     def _evict(self) -> None:
         while len(self._runs) > self._max_runs:

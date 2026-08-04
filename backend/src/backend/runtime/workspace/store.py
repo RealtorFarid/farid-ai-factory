@@ -11,6 +11,7 @@ today's tasks and today's calendar, whenever the process happens to start.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -27,11 +28,33 @@ from backend.runtime.workspace.models import (
     TaskStatus,
 )
 
-__all__ = ["InMemoryWorkspaceStore", "WorkspaceStore", "utcnow"]
+__all__ = ["InMemoryWorkspaceStore", "WorkspaceSeed", "WorkspaceStore", "default_seed", "utcnow"]
 
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceSeed:
+    """The starter dataset, shared by the in-memory store and the database seeder."""
+
+    leads: list[Lead]
+    tasks: list[Task]
+    emails: list[EmailThread]
+    events: list[CalendarEvent]
+    suggestions: list[Suggestion]
+
+
+def default_seed(base: datetime) -> WorkspaceSeed:
+    """Build the starter dataset anchored to ``base``, so today is never empty."""
+    return WorkspaceSeed(
+        leads=_seed_leads(base),
+        tasks=_seed_tasks(base),
+        emails=_seed_emails(base),
+        events=_seed_events(base),
+        suggestions=_seed_suggestions(),
+    )
 
 
 class WorkspaceStore(Protocol):

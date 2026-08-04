@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     agent_timeout_seconds: float = Field(default=120.0, gt=0)
     max_prompt_chars: int = Field(default=20_000, gt=0)
 
+    # ---- Persistence -----------------------------------------------------
+    # Unset means run entirely in memory: useful for tests, demos and the
+    # e2e suite. Set it and the same protocols are served from Postgres.
+    database_url: str | None = None
+    database_echo: bool = False
+    database_pool_size: int = Field(default=5, ge=1, le=50)
+    #: Single-tenant until the account system lands; every row is scoped by it
+    #: from day one so multi-tenancy is not a migration later.
+    default_org_id: str = "org_default"
+
     # ---- Tracing ---------------------------------------------------------
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
@@ -99,6 +109,10 @@ class Settings(BaseSettings):
     @property
     def llm_configured(self) -> bool:
         return self.openai_api_key is not None
+
+    @property
+    def persistence_enabled(self) -> bool:
+        return bool(self.database_url)
 
     @property
     def tracing_enabled(self) -> bool:

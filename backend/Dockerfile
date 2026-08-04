@@ -48,6 +48,11 @@ RUN groupadd --system --gid 1001 propilot \
 WORKDIR /app
 COPY --from=builder --chown=propilot:propilot /app/.venv /app/.venv
 
+# Migrations ship with the image so the same artefact can run `alembic upgrade
+# head` as a deploy step. The app itself never migrates on boot.
+COPY --chown=propilot:propilot alembic.ini ./
+COPY --chown=propilot:propilot migrations ./migrations
+
 USER propilot
 EXPOSE 8000
 

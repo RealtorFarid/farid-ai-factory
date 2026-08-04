@@ -3,21 +3,31 @@
 One place where the runtime object graph is assembled, so the wiring order is
 explicit and testable. Everything above this — the API — receives finished
 collaborators and never constructs its own.
+
+Storage is chosen here and nowhere else: set ``PROPILOT_DATABASE_URL`` and the
+same protocols are served from Postgres instead of memory. No caller changes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from backend.runtime.agent import AgentRegistry, build_registry
 from backend.runtime.config import Settings
 from backend.runtime.events import EventBus
+from backend.runtime.logger import get_logger
 from backend.runtime.orchestrator import AgentRunner
-from backend.runtime.runs import RunStore
+from backend.runtime.runs import InMemoryRunStore, RunStore
 from backend.runtime.tools import ToolRegistry, build_default_tools
 from backend.runtime.workspace import InMemoryWorkspaceStore, WorkspaceService, WorkspaceStore
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from backend.db.engine import Database
+
 __all__ = ["Runtime", "build_runtime"]
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +41,11 @@ class Runtime:
     runs: RunStore
     bus: EventBus
     runner: AgentRunner
+    database: Database | None = None
+
+    def shutdown(self) -> None:
+        if self.database is not None:
+            self.database.dispose()
 
 
 def build_runtime(
@@ -38,21 +53,26 @@ def build_runtime(
     *,
     store: WorkspaceStore | None = None,
     agents: AgentRegistry | None = None,
+    runs: RunStore | None = None,
+    database: Database | None = None,
 ) -> Runtime:
     """Assemble the runtime.
 
-    ``store`` and ``agents`` are injectable so tests can supply a fixed
-    workspace and an offline model without patching globals.
+    Every collaborator is injectable so tests can supply a fixed workspace and
+    an offline model without patching globals.
     """
+    if store is None and runs is None and settings.persistence_enabled:
+        database, store, runs = _build_persistent(settings, database)
+
     workspace = WorkspaceService(store or InMemoryWorkspaceStore())
     tools = build_default_tools(workspace)
     registry = agents if agents is not None else build_registry(settings, tools)
-    runs = RunStore()
+    run_store = runs if runs is not None else InMemoryRunStore()
     bus = EventBus()
 
     runner = AgentRunner(
         agents=registry,
-        runs=runs,
+        runs=run_store,
         bus=bus,
         tools=tools,
         timeout_seconds=settings.agent_timeout_seconds,
@@ -64,7 +84,31 @@ def build_runtime(
         workspace=workspace,
         tools=tools,
         agents=registry,
-        runs=runs,
+        runs=run_store,
         bus=bus,
         runner=runner,
+        database=database,
     )
+
+
+def _build_persistent(
+    settings: Settings, database: Database | None
+) -> tuple[Database, WorkspaceStore, RunStore]:
+    """Wire the Postgres-backed stores. Imported lazily so the in-memory path
+    never pays for the database dependencies."""
+    from backend.db.engine import Database as Db
+    from backend.db.repositories import PostgresRunStore, PostgresWorkspaceStore
+    from backend.db.seed import seed_workspace
+
+    assert settings.database_url is not None
+    db = database or Db(
+        settings.database_url,
+        echo=settings.database_echo,
+        pool_size=settings.database_pool_size,
+    )
+    org = settings.default_org_id
+
+    seeded = seed_workspace(db, org)
+    log.info("runtime.persistence_enabled", org_id=org, seeded=seeded)
+
+    return db, PostgresWorkspaceStore(db, org), PostgresRunStore(db, org)

@@ -62,11 +62,13 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
             agents=container.agents.names(),
             tools=len(container.tools),
             gated_tools=[spec.name for spec in container.tools.requiring_approval()],
+            persistence="postgres" if container.database is not None else "memory",
         )
         try:
             yield
         finally:
             shutdown_tracing()
+            container.shutdown()
             log.info("shutdown.complete")
 
     app = FastAPI(
