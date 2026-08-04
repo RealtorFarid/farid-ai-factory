@@ -20,6 +20,9 @@ function pickMimeType(): string | null {
 
 export function useRecorder() {
   const [state, setState] = useState<RecorderState>("idle");
+  // Why it failed, so the operator can act on it: a blocked permission and
+  // a missing microphone need different fixes.
+  const [reason, setReason] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -39,6 +42,11 @@ export function useRecorder() {
   const start = useCallback(async () => {
     const mimeType = pickMimeType();
     if (!mimeType || !navigator.mediaDevices?.getUserMedia) {
+      setReason(
+        window.isSecureContext
+          ? "This browser can't record audio."
+          : "Recording needs a secure connection (https, or localhost).",
+      );
       setState("unsupported");
       return;
     }
@@ -46,7 +54,17 @@ export function useRecorder() {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      setReason(
+        name === "NotAllowedError"
+          ? "Microphone permission was denied. Allow it in your browser's site settings."
+          : name === "NotFoundError"
+            ? "No microphone was found."
+            : name === "NotReadableError"
+              ? "The microphone is in use by another app."
+              : `Could not open the microphone${name ? ` (${name})` : ""}.`,
+      );
       setState("denied");
       return;
     }
@@ -61,6 +79,7 @@ export function useRecorder() {
     streamRef.current = stream;
     recorderRef.current = recorder;
     setSeconds(0);
+    setReason(null);
     setState("recording");
     timerRef.current = window.setInterval(() => setSeconds((s) => s + 1), 1000);
   }, []);
@@ -92,5 +111,5 @@ export function useRecorder() {
     setState("idle");
   }, [cleanup]);
 
-  return { state, seconds, start, stop, cancel };
+  return { state, seconds, reason, start, stop, cancel };
 }

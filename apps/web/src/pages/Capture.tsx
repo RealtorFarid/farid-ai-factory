@@ -159,11 +159,7 @@ export function CapturePage() {
                       : "Tap to speak"}
                 </span>
                 <span className="card__hint">
-                  {recorder.state === "denied"
-                    ? "Microphone access was blocked."
-                    : recorder.state === "unsupported"
-                      ? "This browser can't record; type below instead."
-                      : "English, Persian or Spanish — it keeps your language."}
+                  {recorder.reason ?? "English, Persian or Spanish — it keeps your language."}
                 </span>
               </div>
               {recorder.state === "recording" && (

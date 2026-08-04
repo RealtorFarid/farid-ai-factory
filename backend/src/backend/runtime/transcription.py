@@ -7,12 +7,18 @@ a commodity and should never be load-bearing on one vendor.
 Cost: audio is billed per minute, not per token, and a post-showing note is
 30-90 seconds. That is the cheapest input in the product for the amount of
 memory it produces, which is exactly why voice is the wedge.
+
+Model choice is not a benchmark preference. Measured on a Persian note,
+whisper-1 misheard the name "رضا" as "رزا" and garbled three further words,
+while gpt-4o-mini-transcribe reproduced it exactly — at roughly half the price.
+A misheard name becomes a stored fact, so accuracy here is a correctness
+requirement, not a nicety.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from backend.runtime.config import Settings
 from backend.runtime.logger import get_logger
@@ -26,6 +32,12 @@ __all__ = [
 ]
 
 log = get_logger(__name__)
+
+#: Only whisper-1 accepts `verbose_json`, which is the format that reports the
+#: detected language and duration. The gpt-4o transcribe models reject it, so
+#: they get plain `json` and language falls through to the extraction step,
+#: which reads the text anyway.
+_VERBOSE_MODELS = frozenset({"whisper-1"})
 
 #: Formats a browser MediaRecorder realistically produces, plus phone uploads.
 SUPPORTED_AUDIO = {
@@ -66,14 +78,22 @@ class OpenAITranscriber:
         self._model = model
 
     async def transcribe(self, *, audio: bytes, filename: str, content_type: str) -> Transcript:
+        # Two calls rather than a variable: the SDK overloads key off a
+        # literal response_format, and each returns a different result type.
         try:
-            result = await self._client.audio.transcriptions.create(
-                model=self._model,
-                file=(filename, audio, content_type),
-                # `verbose_json` is the only format that reports the detected
-                # language, which the multilingual path depends on.
-                response_format="verbose_json",
-            )
+            result: Any
+            if self._model in _VERBOSE_MODELS:
+                result = await self._client.audio.transcriptions.create(
+                    model=self._model,
+                    file=(filename, audio, content_type),
+                    response_format="verbose_json",
+                )
+            else:
+                result = await self._client.audio.transcriptions.create(
+                    model=self._model,
+                    file=(filename, audio, content_type),
+                    response_format="json",
+                )
         except Exception as exc:
             log.warning("transcription.failed", error=str(exc), bytes=len(audio))
             raise TranscriptionError(str(exc)) from exc

@@ -63,7 +63,9 @@ class Settings(BaseSettings):
     #: Falls back to default_model when unset.
     extraction_model: str | None = None
     #: Audio is billed per minute; a post-showing note is under two.
-    transcription_model: str = "whisper-1"
+    #: gpt-4o-mini-transcribe over whisper-1: measurably better on Persian
+    #: and about half the cost. See runtime/transcription.py.
+    transcription_model: str = "gpt-4o-mini-transcribe"
     max_audio_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     agent_timeout_seconds: float = Field(default=120.0, gt=0)
     max_prompt_chars: int = Field(default=20_000, gt=0)
