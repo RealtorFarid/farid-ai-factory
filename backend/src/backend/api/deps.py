@@ -19,6 +19,7 @@ from backend.runtime.extraction import Extractor
 from backend.runtime.orchestrator import AgentRunner
 from backend.runtime.runs import RunStore
 from backend.runtime.tools import ToolRegistry
+from backend.runtime.transcription import Transcriber
 from backend.runtime.workspace import WorkspaceService
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "RuntimeDep",
     "SettingsDep",
     "ToolsDep",
+    "TranscriberDep",
     "WorkspaceDep",
 ]
 
@@ -80,6 +82,11 @@ def get_extractor(request: Request) -> Extractor:
     return extractor
 
 
+def get_transcriber(request: Request) -> Transcriber:
+    transcriber: Transcriber = request.app.state.transcriber
+    return transcriber
+
+
 def get_runtime(request: Request) -> Runtime:
     runtime: Runtime = request.app.state.runtime
     return runtime
@@ -87,6 +94,7 @@ def get_runtime(request: Request) -> Runtime:
 
 ClaimsDep = Annotated[ClaimStore, Depends(get_claims)]
 ExtractorDep = Annotated[Extractor, Depends(get_extractor)]
+TranscriberDep = Annotated[Transcriber, Depends(get_transcriber)]
 RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
 SettingsDep = Annotated[Settings, Depends(get_settings_from_state)]
 RegistryDep = Annotated[AgentRegistry, Depends(get_registry)]

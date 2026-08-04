@@ -1193,3 +1193,63 @@ a.list__row:hover {
   font-style: italic;
   overflow-wrap: anywhere;
 }
+
+/* ---- Recorder ------------------------------------------------------------ */
+
+.recorder {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.recorder__button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition: background var(--transition), transform var(--transition);
+}
+
+.recorder__button:not(:disabled):hover {
+  background: var(--accent-hover);
+}
+
+.recorder__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recorder__button--live {
+  background: var(--danger);
+  color: #fff;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(204 49 65 / 45%); }
+  50% { box-shadow: 0 0 0 8px rgb(204 49 65 / 0%); }
+}
+
+.recorder__label {
+  font-size: var(--text-base);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.capture__transcript {
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  line-height: 1.6;
+}

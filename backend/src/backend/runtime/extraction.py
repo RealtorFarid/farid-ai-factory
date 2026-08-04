@@ -61,6 +61,12 @@ Never extract, infer or guess: ethnicity, national origin, religion, immigration
 status, disability, health, age, or family composition as a protected
 characteristic. Skip them entirely even if the note mentions them.
 
+Language. Notes arrive in English, Persian or Spanish, often mixed. Reply in
+the SAME language the note is written in: `value`, `summary` and `follow_ups`
+all stay in that language, and `quote` is copied verbatim so it always matches.
+Only `predicate` stays in English snake_case, because it is a key, not prose.
+Set `language` to the ISO-639-1 code of the note.
+
 Also give a one-line summary and any concrete follow-ups the note implies.
 """
 
@@ -78,6 +84,9 @@ class ExtractedClaim(BaseModel):
 
 class Extraction(BaseModel):
     summary: str = Field(max_length=500)
+    language: str | None = Field(
+        default=None, max_length=8, description="ISO-639-1 code of the note."
+    )
     claims: list[ExtractedClaim] = Field(default_factory=list)
     follow_ups: list[str] = Field(default_factory=list)
 
@@ -105,7 +114,12 @@ class Extractor:
         self._claims = claims
 
     async def capture(
-        self, *, note: str, lead_id: str, source_ref: str | None = None
+        self,
+        *,
+        note: str,
+        lead_id: str,
+        source_ref: str | None = None,
+        language: str | None = None,
     ) -> tuple[Extraction, list[str], int]:
         """Extract from a note and persist the grounded claims.
 
@@ -114,6 +128,8 @@ class Extractor:
         """
         result = await self._agent.run(note)
         extraction = result.output
+        # The transcriber's detection beats the model's guess when both exist.
+        detected = language or extraction.language
 
         kept, dropped = grounded_claims(extraction, note)
         if dropped:
@@ -131,6 +147,9 @@ class Extractor:
                 sensitivity=Sensitivity.NORMAL,
                 legal_basis=LegalBasis.LEGITIMATE_INTEREST,
                 decay_policy=DecayPolicy.VOLATILE if claim.volatile else DecayPolicy.STATIC,
+                # Stored as data rather than a column: the language of a fact
+                # is presentation metadata, not something we query on.
+                object_data={"language": detected} if detected else None,
             )
             for claim in kept
         ]
@@ -141,8 +160,13 @@ class Extractor:
             claims=len(claim_ids),
             dropped=dropped,
             chars=len(note),
+            language=detected,
         )
-        return extraction.model_copy(update={"claims": kept}), claim_ids, dropped
+        return (
+            extraction.model_copy(update={"claims": kept, "language": detected}),
+            claim_ids,
+            dropped,
+        )
 
 
 def build_extractor(settings: Settings, claims: ClaimStore) -> Extractor:

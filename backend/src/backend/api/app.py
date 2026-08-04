@@ -91,6 +91,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     app.state.runner = container.runner
     app.state.claims = container.claims
     app.state.extractor = container.extractor
+    app.state.transcriber = container.transcriber
 
     app.add_middleware(RequestContextMiddleware, header_name=settings.request_id_header)
     app.add_middleware(

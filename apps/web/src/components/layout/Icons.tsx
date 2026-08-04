@@ -91,6 +91,19 @@ export const IconPartial = ({ size = 16 }: Props) => (
   </svg>
 );
 
+export const IconMic = ({ size = 18 }: Props) => (
+  <svg {...base(size)}>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" />
+  </svg>
+);
+
+export const IconStop = ({ size = 18 }: Props) => (
+  <svg {...base(size)}>
+    <rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" />
+  </svg>
+);
+
 export const IconSpark = ({ size = 16 }: Props) => (
   <svg {...base(size)}>
     <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.9L12 18.5l-1.8-5.8L4.5 10.8 10.2 9 12 3.5Z" />

@@ -22,6 +22,7 @@ from backend.runtime.logger import get_logger
 from backend.runtime.orchestrator import AgentRunner
 from backend.runtime.runs import InMemoryRunStore, RunStore
 from backend.runtime.tools import ToolRegistry, build_default_tools
+from backend.runtime.transcription import Transcriber, build_transcriber
 from backend.runtime.workspace import InMemoryWorkspaceStore, WorkspaceService, WorkspaceStore
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -45,6 +46,7 @@ class Runtime:
     runner: AgentRunner
     claims: ClaimStore
     extractor: Extractor
+    transcriber: Transcriber
     database: Database | None = None
 
     def shutdown(self) -> None:
@@ -95,6 +97,7 @@ def build_runtime(
         runner=runner,
         claims=claim_store,
         extractor=build_extractor(settings, claim_store),
+        transcriber=build_transcriber(settings),
         database=database,
     )
 

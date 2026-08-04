@@ -75,6 +75,7 @@ def build_stub_extraction_model() -> FunctionModel:
         ]
         payload = {
             "summary": (sentences[0][:200] if sentences else "Empty note."),
+            "language": "fa" if any("\u0600" <= ch <= "\u06ff" for ch in note) else "en",
             "claims": claims,
             "follow_ups": ["Confirm the details captured above."] if claims else [],
         }

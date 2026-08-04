@@ -236,6 +236,10 @@ export interface ClaimInfo {
 export interface CaptureResult {
   lead_id: string;
   summary: string;
+  /** What was heard, so a mis-heard name is visible rather than buried. */
+  transcript: string | null;
+  language: string | null;
+  duration_seconds: number | null;
   follow_ups: string[];
   claims: ClaimInfo[];
   /** Facts the model proposed that it could not quote, and so were not stored. */

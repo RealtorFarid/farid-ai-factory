@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     #: its own routing slot: the cheapest model that passes the eval bar.
     #: Falls back to default_model when unset.
     extraction_model: str | None = None
+    #: Audio is billed per minute; a post-showing note is under two.
+    transcription_model: str = "whisper-1"
+    max_audio_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     agent_timeout_seconds: float = Field(default=120.0, gt=0)
     max_prompt_chars: int = Field(default=20_000, gt=0)
 

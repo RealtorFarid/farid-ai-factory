@@ -49,7 +49,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     response = await fetch(`${BASE}${path}`, {
       ...init,
       headers: {
-        "Content-Type": "application/json",
+        // FormData sets its own Content-Type, including the boundary.
+        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
         ...(init?.headers ?? {}),
       },
     });
@@ -91,6 +92,14 @@ export const api = {
     }),
   leadClaims: (leadId: string) =>
     request<ClaimInfo[]>(`/v1/leads/${encodeURIComponent(leadId)}/claims`),
+
+  captureVoice: (leadId: string, audio: Blob, filename: string) => {
+    const form = new FormData();
+    form.append("lead_id", leadId);
+    form.append("audio", audio, filename);
+    // No Content-Type header: the browser must set the multipart boundary.
+    return request<CaptureResult>("/v1/capture/voice", { method: "POST", body: form });
+  },
 
   // ---- Agents ------------------------------------------------------------
   agents: () => request<{ agents: AgentInfo[]; default: string }>("/v1/agents"),

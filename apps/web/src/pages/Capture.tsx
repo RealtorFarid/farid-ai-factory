@@ -7,8 +7,9 @@
 
 import { useState } from "react";
 
-import { IconCheck, IconSpark } from "@/components/layout/Icons";
+import { IconCheck, IconMic, IconSpark, IconStop } from "@/components/layout/Icons";
 import { Async, Badge, Button, Card, SkeletonRows, type Tone } from "@/components/ui";
+import { useRecorder } from "@/hooks/useRecorder";
 import { useResource } from "@/hooks/useResource";
 import { ApiError, api } from "@/lib/api";
 import { relative, titleCase } from "@/lib/format";
@@ -17,6 +18,12 @@ import type { CaptureResult, ClaimInfo, Lead } from "@/lib/types";
 const EXAMPLE =
   "Met Priya at the Yonge showing. Her husband Reza came too — he cared more " +
   "about the commute than the layout. They want to move before September.";
+
+function formatSeconds(total: number): string {
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 
 function confidenceTone(value: number): Tone {
   if (value >= 0.85) return "success";
@@ -51,12 +58,49 @@ export function CapturePage() {
   const [result, setResult] = useState<CaptureResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const recorder = useRecorder();
 
   const selected = leadId || leads.data?.[0]?.id || "";
   const known = useResource<ClaimInfo[]>(
     () => (selected ? api.leadClaims(selected) : Promise.resolve([])),
     [selected, reloadKey],
   );
+
+  function fail(cause: unknown, fallback: string) {
+    setError(
+      cause instanceof ApiError && cause.isOffline
+        ? "Can't reach the Propilot API."
+        : cause instanceof Error
+          ? cause.message
+          : fallback,
+    );
+  }
+
+  async function toggleRecording() {
+    if (busy) return;
+    setError(null);
+
+    if (recorder.state !== "recording") {
+      await recorder.start();
+      return;
+    }
+
+    const recording = await recorder.stop();
+    if (!recording) {
+      setError("Nothing was recorded.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      setResult(await api.captureVoice(selected, recording.blob, recording.filename));
+      setReloadKey((k) => k + 1);
+    } catch (cause) {
+      fail(cause, "Could not save that recording.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit() {
     if (!selected || !note.trim() || busy) return;
@@ -67,13 +111,7 @@ export function CapturePage() {
       setNote("");
       setReloadKey((k) => k + 1);
     } catch (cause) {
-      setError(
-        cause instanceof ApiError && cause.isOffline
-          ? "Can’t reach the Propilot API."
-          : cause instanceof Error
-            ? cause.message
-            : "Could not save that note.",
-      );
+      fail(cause, "Could not save that note.");
     } finally {
       setBusy(false);
     }
@@ -99,6 +137,46 @@ export function CapturePage() {
                 ))}
               </select>
             </label>
+
+            <div className="recorder">
+              <button
+                type="button"
+                className={`recorder__button ${
+                  recorder.state === "recording" ? "recorder__button--live" : ""
+                }`}
+                onClick={toggleRecording}
+                disabled={busy || !selected}
+                aria-label={recorder.state === "recording" ? "Stop recording" : "Record a note"}
+              >
+                {recorder.state === "recording" ? <IconStop /> : <IconMic />}
+              </button>
+              <div className="stack">
+                <span className="recorder__label">
+                  {recorder.state === "recording"
+                    ? `Recording — ${formatSeconds(recorder.seconds)}`
+                    : busy
+                      ? "Transcribing…"
+                      : "Tap to speak"}
+                </span>
+                <span className="card__hint">
+                  {recorder.state === "denied"
+                    ? "Microphone access was blocked."
+                    : recorder.state === "unsupported"
+                      ? "This browser can't record; type below instead."
+                      : "English, Persian or Spanish — it keeps your language."}
+                </span>
+              </div>
+              {recorder.state === "recording" && (
+                <button
+                  type="button"
+                  className="card__action"
+                  onClick={recorder.cancel}
+                  style={{ marginLeft: "auto" }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
 
             <textarea
               className="capture__note"
@@ -143,6 +221,18 @@ export function CapturePage() {
               <p className="capture__summary">
                 <IconCheck /> {result.summary}
               </p>
+              {result.transcript && (
+                <p className="capture__transcript">
+                  <span className="card__hint">
+                    Heard{result.language ? ` (${result.language})` : ""}
+                    {result.duration_seconds
+                      ? ` · ${formatSeconds(Math.round(result.duration_seconds))}`
+                      : ""}
+                    :
+                  </span>{" "}
+                  {result.transcript}
+                </p>
+              )}
               {result.discarded > 0 && (
                 <p className="card__hint">
                   {result.discarded} suggested fact
