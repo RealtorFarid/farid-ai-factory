@@ -1,23 +1,165 @@
 /**
- * Dashboard panels.
+ * Dashboard panels, plus the rules that decide what belongs on them.
  *
- * Each takes already-fetched data so the dashboard can load everything in one
+ * Each list takes already-fetched data so a page can load everything in one
  * round trip, and each is reused verbatim on its dedicated page.
+ *
+ * The selectors below live here rather than in a page because they are
+ * business rules, not presentation. When a second page needs them they belong
+ * in `lib/rules.ts`; today the dashboard is the only consumer.
  */
 
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 import { Badge, Score, type Tone } from "../ui";
 import type {
   CalendarEvent,
   CalendarSummary,
   EmailSummary,
+  EmailThread,
   Lead,
   LeadSummary,
   Suggestion,
   Task,
 } from "@/lib/types";
 import { budget, day, initials, isOverdue, relative, time, titleCase } from "@/lib/format";
+
+// ---- Business rules ------------------------------------------------------
+
+/**
+ * Mirrors `FOLLOW_UP_AFTER` in the backend's WorkspaceService.
+ *
+ * The API exposes the *count* of stale leads but not the list, so the
+ * threshold is duplicated here to render which ones. Keep the two in sync — if
+ * they drift, the dashboard's count and its list will disagree.
+ */
+export const FOLLOW_UP_AFTER_DAYS = 7;
+
+/**
+ * Live pipeline stages, most urgent first: a deal in flight outranks a new
+ * enquiry. Closed and lost are absent on purpose — nobody needs calling.
+ */
+const CALL_PRIORITY: Lead["stage"][] = ["offer", "showing", "qualified", "contacted", "new"];
+
+function daysSince(iso: string, now: Date): number {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 0;
+  return (now.getTime() - then) / 86_400_000;
+}
+
+/** Who to call: stage urgency first, then whoever has waited longest. */
+export function callList(leads: Lead[], limit = 6, now: Date = new Date()): Lead[] {
+  return leads
+    .filter((lead) => CALL_PRIORITY.includes(lead.stage))
+    .sort((a, b) => {
+      const byStage = CALL_PRIORITY.indexOf(a.stage) - CALL_PRIORITY.indexOf(b.stage);
+      if (byStage !== 0) return byStage;
+      return daysSince(b.last_contact_at, now) - daysSince(a.last_contact_at, now);
+    })
+    .slice(0, limit);
+}
+
+/** Active leads nobody has touched in a week, coldest first. */
+export function coldLeads(leads: Lead[], now: Date = new Date()): Lead[] {
+  return leads
+    .filter(
+      (lead) =>
+        CALL_PRIORITY.includes(lead.stage) &&
+        daysSince(lead.last_contact_at, now) > FOLLOW_UP_AFTER_DAYS,
+    )
+    .sort((a, b) => daysSince(b.last_contact_at, now) - daysSince(a.last_contact_at, now));
+}
+
+export function overdueTasks(tasks: Task[], now: Date = new Date()): Task[] {
+  return tasks.filter((task) => task.status !== "done" && isOverdue(task.due_at, now));
+}
+
+/** High-priority work due today, minus anything already shown as overdue. */
+export function priorityToday(tasks: Task[], now: Date = new Date()): Task[] {
+  return tasks.filter(
+    (task) =>
+      task.status !== "done" &&
+      task.priority === "high" &&
+      !isOverdue(task.due_at, now) &&
+      new Date(task.due_at).toDateString() === now.toDateString(),
+  );
+}
+
+export function todaysEvents(events: CalendarEvent[], now: Date = new Date()): CalendarEvent[] {
+  return events.filter(
+    (event) => new Date(event.starts_at).toDateString() === now.toDateString(),
+  );
+}
+
+export function awaitingReply(threads: EmailThread[]): EmailThread[] {
+  return threads.filter((thread) => thread.needs_response);
+}
+
+// ---- Row behaviour -------------------------------------------------------
+
+/** Make a row behave like a link when the caller wants navigation. */
+function rowProps(id: string | null | undefined, onSelect?: (id: string) => void) {
+  if (!id || !onSelect) return {};
+  return {
+    onClick: () => onSelect(id),
+    onKeyDown: (event: KeyboardEvent<HTMLLIElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onSelect(id);
+      }
+    },
+    role: "button",
+    tabIndex: 0,
+    style: { cursor: "pointer" },
+  };
+}
+
+/**
+ * Call, text or email without leaving the page.
+ *
+ * `tel:` and `sms:` hand off to the OS, so this works from a Mac with a paired
+ * phone and from mobile directly. Clicks stop propagating, so acting on a row
+ * never also navigates away from it.
+ */
+export function LeadActions({
+  lead,
+  onNote,
+}: {
+  lead: Lead;
+  onNote?: (leadId: string) => void;
+}) {
+  const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+  return (
+    <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+      {lead.phone && (
+        <a className="chip" href={`tel:${lead.phone}`} onClick={stop}>
+          Call
+        </a>
+      )}
+      {lead.phone && (
+        <a className="chip" href={`sms:${lead.phone}`} onClick={stop}>
+          SMS
+        </a>
+      )}
+      {lead.email && (
+        <a className="chip" href={`mailto:${lead.email}`} onClick={stop}>
+          Email
+        </a>
+      )}
+      {onNote && (
+        <button
+          className="chip"
+          onClick={(event) => {
+            event.stopPropagation();
+            onNote(lead.id);
+          }}
+        >
+          Note
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ---- Tasks ---------------------------------------------------------------
 
@@ -27,13 +169,19 @@ const PRIORITY_TONE: Record<Task["priority"], Tone> = {
   low: "neutral",
 };
 
-export function TaskList({ tasks }: { tasks: Task[] }) {
+export function TaskList({
+  tasks,
+  onSelect,
+}: {
+  tasks: Task[];
+  onSelect?: (leadId: string) => void;
+}) {
   return (
     <ul className="list">
       {tasks.map((task) => {
         const overdue = isOverdue(task.due_at) && task.status !== "done";
         return (
-          <li className="list__row" key={task.id}>
+          <li className="list__row" key={task.id} {...rowProps(task.lead_id, onSelect)}>
             <div className="list__main">
               <p className="list__title">{task.title}</p>
               <p className="list__meta">
@@ -103,31 +251,16 @@ export function LeadPipeline({ summary }: { summary: LeadSummary }) {
 export function LeadList({
   leads,
   onSelect,
+  actions,
 }: {
   leads: Lead[];
   onSelect?: (id: string) => void;
+  actions?: (lead: Lead) => ReactNode;
 }) {
   return (
     <ul className="list">
       {leads.map((lead) => (
-        <li
-          className="list__row"
-          key={lead.id}
-          {...(onSelect
-            ? {
-                onClick: () => onSelect(lead.id),
-                onKeyDown: (event: KeyboardEvent<HTMLLIElement>) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelect(lead.id);
-                  }
-                },
-                role: "button",
-                tabIndex: 0,
-                style: { cursor: "pointer" },
-              }
-            : {})}
-        >
+        <li className="list__row" key={lead.id} {...rowProps(lead.id, onSelect)}>
           <span className="avatar">{initials(lead.name)}</span>
           <div className="list__main">
             <p className="list__title">{lead.name}</p>
@@ -136,6 +269,7 @@ export function LeadList({
               {budget(lead.budget_min, lead.budget_max)} · last touch{" "}
               {relative(lead.last_contact_at)}
             </p>
+            {actions && <div style={{ marginTop: 6 }}>{actions(lead)}</div>}
           </div>
           <span className="list__side">
             <Score value={lead.score} />
@@ -148,11 +282,17 @@ export function LeadList({
 
 // ---- Email ---------------------------------------------------------------
 
-export function EmailList({ summary }: { summary: EmailSummary }) {
+export function EmailList({
+  summary,
+  onSelect,
+}: {
+  summary: EmailSummary;
+  onSelect?: (leadId: string) => void;
+}) {
   return (
     <ul className="list">
       {summary.threads.map((thread) => (
-        <li className="list__row" key={thread.id}>
+        <li className="list__row" key={thread.id} {...rowProps(thread.lead_id, onSelect)}>
           <span className="avatar">{initials(thread.sender)}</span>
           <div className="list__main">
             <p className="list__title">
@@ -191,11 +331,17 @@ const KIND_TONE: Record<CalendarEvent["kind"], Tone> = {
   open_house: "success",
 };
 
-export function CalendarList({ summary }: { summary: CalendarSummary }) {
+export function CalendarList({
+  summary,
+  onSelect,
+}: {
+  summary: CalendarSummary;
+  onSelect?: (leadId: string) => void;
+}) {
   return (
     <ul className="list">
       {summary.events.map((event) => (
-        <li className="list__row" key={event.id}>
+        <li className="list__row" key={event.id} {...rowProps(event.lead_id, onSelect)}>
           <div className="stack" style={{ minWidth: 58, gap: 0 }}>
             <span style={{ fontWeight: 620, fontVariantNumeric: "tabular-nums" }}>
               {time(event.starts_at)}
