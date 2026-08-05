@@ -5,6 +5,8 @@
  * round trip, and each is reused verbatim on its dedicated page.
  */
 
+import type { KeyboardEvent } from "react";
+
 import { Badge, Score, type Tone } from "../ui";
 import type {
   CalendarEvent,
@@ -98,11 +100,34 @@ export function LeadPipeline({ summary }: { summary: LeadSummary }) {
   );
 }
 
-export function LeadList({ leads }: { leads: Lead[] }) {
+export function LeadList({
+  leads,
+  onSelect,
+}: {
+  leads: Lead[];
+  onSelect?: (id: string) => void;
+}) {
   return (
     <ul className="list">
       {leads.map((lead) => (
-        <li className="list__row" key={lead.id}>
+        <li
+          className="list__row"
+          key={lead.id}
+          {...(onSelect
+            ? {
+                onClick: () => onSelect(lead.id),
+                onKeyDown: (event: KeyboardEvent<HTMLLIElement>) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect(lead.id);
+                  }
+                },
+                role: "button",
+                tabIndex: 0,
+                style: { cursor: "pointer" },
+              }
+            : {})}
+        >
           <span className="avatar">{initials(lead.name)}</span>
           <div className="list__main">
             <p className="list__title">{lead.name}</p>

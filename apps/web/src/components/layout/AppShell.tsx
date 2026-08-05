@@ -3,16 +3,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
-import {
-  IconActivity,
-  IconCalendar,
-  IconChat,
-  IconInbox,
-  IconLeads,
-  IconSpark,
-  IconMenu,
-  IconToday,
-} from "./Icons";
+import { IconCalendar, IconLeads, IconMenu, IconSpark, IconToday } from "./Icons";
 import { api } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
 import type { Dashboard } from "@/lib/types";
@@ -24,33 +15,29 @@ interface NavItem {
   count?: (d: Dashboard) => number;
 }
 
+// The agent's day, in the order they work it. Ask Atlas, Inbox and Activity
+// keep working at their routes; they just leave the primary nav.
 const PRIMARY: NavItem[] = [
-  { to: "/", label: "Today", icon: IconToday },
-  { to: "/chat", label: "Ask Atlas", icon: IconChat },
-  { to: "/capture", label: "Capture", icon: IconSpark },
-];
-
-const WORKSPACE: NavItem[] = [
+  { to: "/", label: "Dashboard", icon: IconToday },
   {
     to: "/leads",
     label: "Leads",
     icon: IconLeads,
     count: (d) => d.leads.needs_follow_up,
   },
-  { to: "/inbox", label: "Inbox", icon: IconInbox, count: (d) => d.emails.unread },
+  { to: "/capture", label: "Voice Notes", icon: IconSpark },
   {
     to: "/calendar",
     label: "Calendar",
     icon: IconCalendar,
     count: (d) => d.calendar.today_count,
   },
-  { to: "/activity", label: "Activity", icon: IconActivity },
 ];
 
 const TITLES: Record<string, { title: string; subtitle: string }> = {
-  "/": { title: "Today", subtitle: "What needs your attention" },
+  "/": { title: "Dashboard", subtitle: "What needs your attention" },
   "/chat": { title: "Ask Atlas", subtitle: "Your executive agent" },
-  "/capture": { title: "Capture", subtitle: "Say what happened — Atlas remembers it" },
+  "/capture": { title: "Voice Notes", subtitle: "Say what happened — Atlas remembers it" },
   "/leads": { title: "Leads", subtitle: "Your pipeline, hottest first" },
   "/inbox": { title: "Inbox", subtitle: "Threads waiting on you" },
   "/calendar": { title: "Calendar", subtitle: "The next seven days" },
@@ -104,7 +91,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => setMenuOpen(false), [pathname]);
 
-  const heading = TITLES[pathname] ?? { title: "Propilot", subtitle: "" };
+  // A lead detail path is dynamic, so it cannot be a TITLES key.
+  const heading =
+    TITLES[pathname] ??
+    (pathname.startsWith("/leads/")
+      ? { title: "Lead", subtitle: "Everything Atlas knows about them" }
+      : { title: "Propilot", subtitle: "" });
   const offline = Boolean(error);
 
   return (
@@ -116,12 +108,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <NavSection items={PRIMARY} dashboard={dashboard} onNavigate={() => setMenuOpen(false)} />
-        <NavSection
-          label="Workspace"
-          items={WORKSPACE}
-          dashboard={dashboard}
-          onNavigate={() => setMenuOpen(false)}
-        />
 
         <div className="sidebar__footer">
           <span className="sidebar__avatar">FY</span>

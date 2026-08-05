@@ -4,6 +4,8 @@
  * Each is backed by a real endpoint — there are no placeholder screens.
  */
 
+import { useNavigate } from "react-router-dom";
+
 import { CalendarList, EmailList, LeadList, LeadPipeline, Stat } from "@/components/panels";
 import { Async, Badge, Card, SkeletonRows, type Tone } from "@/components/ui";
 import { useResource } from "@/hooks/useResource";
@@ -21,6 +23,7 @@ import type {
 // ---- Leads ---------------------------------------------------------------
 
 export function LeadsPage() {
+  const navigate = useNavigate();
   const leads = useResource<Lead[]>(() => api.leads());
   const summary = useResource<LeadSummary>(() => api.leadSummary());
 
@@ -36,7 +39,9 @@ export function LeadsPage() {
             skeleton={<SkeletonRows rows={6} />}
             empty={{ title: "No leads yet", when: (d) => d.length === 0 }}
           >
-            {(data) => <LeadList leads={data} />}
+            {(data) => (
+              <LeadList leads={data} onSelect={(id) => navigate(`/leads/${id}`)} />
+            )}
           </Async>
         </Card>
       </div>
